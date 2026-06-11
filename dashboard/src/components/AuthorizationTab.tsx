@@ -76,7 +76,7 @@ export function AuthorizationTab() {
 
   const fetchGroups = async () => {
     setLoadingGroups(true);
-    const res = await api.get<{ groups: IASGroup[] }>('/api/authz/groups');
+    const res = await api.post<{ groups: IASGroup[] }>('/api/authz/groups', config);
     if (res.ok && res.data && (res.data as any).groups) {
       setGroups((res.data as any).groups);
       setMessage('');

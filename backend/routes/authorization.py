@@ -195,17 +195,55 @@ async def update_authz_config(payload: AuthorizationConfig, request: Request):
     return {"status": "saved"}
 
 
-@router.get("/groups")
-async def list_ias_groups(settings: Settings = Depends(get_settings)):
-    """Fetch all IAS groups via SCIM API (read-only)."""
-    if not settings.authorization.scim_url and not settings.auth.ias_url:
+@router.post("/groups")
+async def list_ias_groups(
+    payload: AuthorizationConfig | None = None,
+    settings: Settings = Depends(get_settings),
+):
+    """Fetch all IAS groups via SCIM API (read-only).
+
+    Accepts optional payload with credentials to use instead of saved settings.
+    """
+    # Use payload credentials if provided, else fall back to saved
+    authz = (
+        payload
+        if (
+            payload
+            and payload.scim_user
+            and payload.scim_password
+            and not payload.scim_password.startswith("*")
+        )
+        else settings.authorization
+    )
+
+    scim_url = (
+        authz.scim_url
+        or settings.authorization.scim_url
+        or (
+            settings.auth.ias_url.rstrip("/") + "/scim" if settings.auth.ias_url else ""
+        )
+    )
+    if not scim_url:
         return {"error": "SCIM URL not configured. Enter the SCIM API URL."}
 
-    url = _scim_base_url(settings) + "/Groups?count=100"
-    headers = _scim_headers(settings)
-    if not headers:
+    import base64
+
+    if (
+        not authz.scim_user
+        or not authz.scim_password
+        or authz.scim_password.startswith("*")
+    ):
         return {"error": "SCIM credentials not configured"}
 
+    creds = base64.b64encode(
+        f"{authz.scim_user}:{authz.scim_password}".encode()
+    ).decode()
+    headers = {
+        "Authorization": f"Basic {creds}",
+        "Content-Type": "application/scim+json",
+    }
+
+    url = scim_url.rstrip("/") + "/Groups?count=100"
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             resp = await client.get(url, headers=headers)
