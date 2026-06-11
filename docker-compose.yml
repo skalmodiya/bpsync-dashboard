@@ -3,6 +3,84 @@
 # Access: Dashboard at http://localhost:3001
 
 services:
+  # PostgreSQL (shared database for n8n and backend)
+  postgres:
+    image: postgres:16-alpine
+    hostname: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=bpsync
+      - POSTGRES_PASSWORD=bpsync
+      - POSTGRES_DB=bpsync
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -U bpsync -d bpsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bpsync
+
+  # n8n Workflow Importer (runs once BEFORE n8n starts, imports directly into DB)
+  n8n-import:
+    image: n8nio/n8n:latest
+    container_name: bpsync-n8n-import
+    environment:
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=bpsync
+      - DB_POSTGRESDB_PASSWORD=bpsync
+    entrypoint: /bin/sh
+    command:
+      - "-c"
+      - "for f in /workflows/*.json; do echo Importing $$f; n8n import:workflow --input=$$f; done && echo Done."
+    volumes:
+      - ./docker/n8n-import/workflows:/workflows:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - bpsync
+
+  # n8n Workflow Engine (pre-loaded with BUPA Sync workflows)
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://n8n:5678
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=bpsync
+      - DB_POSTGRESDB_PASSWORD=bpsync
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:5678/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      n8n-import:
+        condition: service_completed_successfully
+    networks:
+      - bpsync
+
   # React Dashboard (Vite production build served by nginx)
   dashboard:
     build:
@@ -27,6 +105,7 @@ services:
       - backend-data:/app/data
     environment:
       - DEPLOYMENT_MODE=docker
+      - DATABASE_URL=postgresql://bpsync:bpsync@postgres:5432/bpsync
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -35,6 +114,8 @@ services:
       timeout: 3s
       retries: 5
     depends_on:
+      postgres:
+        condition: service_healthy
       mock-s4hana:
         condition: service_healthy
     networks:
@@ -82,46 +163,6 @@ services:
     networks:
       - bpsync
 
-  # n8n Workflow Engine (pre-loaded with BUPA Sync workflows)
-  n8n:
-    image: n8nio/n8n:latest
-    ports:
-      - "5678:5678"
-    volumes:
-      - n8n-data:/home/node/.n8n
-    environment:
-      - N8N_HOST=0.0.0.0
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://n8n:5678
-      - N8N_SECURE_COOKIE=false
-      - N8N_RUNNERS_ENABLED=true
-      # Pre-configure owner to skip setup wizard (required for workflow import)
-      - N8N_DEFAULT_USER_EMAIL=admin@bupa-sync.local
-      - N8N_DEFAULT_USER_PASSWORD=BupaSync2024!
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:5678/healthz || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - bpsync
-
-  # n8n Workflow Importer (runs once to import workflows)
-  n8n-import:
-    build:
-      context: ./docker/n8n-import
-      dockerfile: Dockerfile
-    depends_on:
-      n8n:
-        condition: service_healthy
-    networks:
-      - bpsync
-    restart: "no"
-
   # Mailpit (local SMTP + web UI for email testing)
   mailpit:
     image: axllent/mailpit
@@ -137,6 +178,7 @@ services:
       - bpsync
 
 volumes:
+  postgres-data:
   backend-data:
   n8n-data:
 

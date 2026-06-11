@@ -58,7 +58,8 @@ Additional Services:
 | Backend API     | FastAPI (Python)   | 0.100+    |
 | AI Agent        | Python + LLM Proxy | 3.13      |
 | Workflows       | n8n                | Latest    |
-| Database        | SQLite             | 3.x       |
+| Database (Docker)| PostgreSQL        | 16        |
+| Database (Native)| SQLite            | 3.x       |
 | Auth            | SAP IAS (OIDC)    | —         |
 | Email           | Mailpit (dev)      | Latest    |
 | Mock SAP        | FastAPI            | —         |
@@ -113,11 +114,12 @@ docker-compose down -v
 
 Once all services are healthy:
 
-| Service       | URL                          | Credentials                          |
+| Service       | URL                          | Notes                                |
 |---------------|------------------------------|--------------------------------------|
 | Dashboard     | http://localhost:3001         | —                                    |
 | Backend API   | http://localhost:8081         | —                                    |
-| n8n Editor    | http://localhost:5678         | admin@bupa-sync.local / BupaSync2024! |
+| n8n Editor    | http://localhost:5678         | Create account on first login; workflows are pre-loaded |
+| PostgreSQL    | localhost:5432               | User: bpsync / Pass: bpsync          |
 | Mock S/4HANA  | http://localhost:8090         | —                                    |
 | Mailpit UI    | http://localhost:8025         | —                                    |
 | AI Agent      | http://localhost:5000         | —                                    |
@@ -331,7 +333,7 @@ Full stack runs via `docker-compose up --build`. Suitable for demos and developm
 | Backend URL       | localhost:8080        | localhost:8081        | *.cfapps.sap.hana   |
 | n8n URL           | localhost:5678        | localhost:5678        | Managed / self-host |
 | Authentication    | Bypassed (dev)        | Bypassed (dev)        | SAP IAS (OIDC)      |
-| Database          | File (SQLite)         | Docker Volume         | HANA Cloud          |
+| Database          | SQLite (file)         | PostgreSQL 16         | HANA Cloud          |
 | Email             | Console output        | Mailpit               | Real SMTP           |
 | S/4HANA           | Mock service          | Mock container        | Real S/4HANA        |
 | Startup           | `start-local.bat`    | `docker-compose up`   | CF push / CI/CD     |
@@ -377,14 +379,19 @@ If you get an error like `litellm.AuthenticationError: Invalid API key for local
 
 ### n8n Workflows Missing on First Login
 
-The `n8n-import` service automatically imports workflows with retry logic:
-- Phase 1: Waits for n8n web UI to respond
-- Phase 2: Waits for n8n CLI/database to be ready
-- Phase 3: Imports each workflow with up to 5 retries
+The `n8n-import` service runs **before** n8n starts (following the official n8n pattern).
+It imports workflows directly into the n8n SQLite database, so they are available
+immediately when you log in for the first time.
 
 If workflows are still missing after startup, check logs:
 ```bash
 docker-compose logs n8n-import
+```
+
+To force a re-import (e.g., after a reset):
+```bash
+docker-compose down -v
+docker-compose up --build -d
 ```
 
 After import, workflows need to be **activated** manually in the n8n UI.
