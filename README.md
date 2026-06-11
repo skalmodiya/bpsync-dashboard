@@ -96,7 +96,7 @@ docker-compose up --build
 # Background (detached mode)
 docker-compose up --build -d
 
-# With ngrok (expose n8n webhooks to internet)
+# With ngrok (share app via HTTPS with colleagues)
 docker-compose --profile ngrok up --build -d
 ```
 
@@ -119,7 +119,15 @@ docker-compose down
 docker-compose down -v
 ```
 
-Once all services are healthy:
+---
+
+## Access Modes
+
+### Mode 1: Docker without ngrok (local development)
+
+```bash
+docker-compose up --build -d
+```
 
 | Service       | URL                          | Notes                                |
 |---------------|------------------------------|--------------------------------------|
@@ -127,19 +135,85 @@ Once all services are healthy:
 | Backend API   | http://localhost:8081         | —                                    |
 | n8n Editor    | http://localhost:5678         | Create account on first login; workflows are pre-loaded |
 | PostgreSQL    | localhost:5432               | User: bpsync / Pass: bpsync          |
-| pgAdmin       | http://localhost:5050         | Login: admin@bupa-sync.dev / admin |
+| pgAdmin       | http://localhost:5050         | Login: admin@bupa-sync.dev / admin   |
 | Qdrant        | http://localhost:6333         | Vector DB dashboard                  |
 | Mock S/4HANA  | http://localhost:8090         | —                                    |
 | Mailpit UI    | http://localhost:8025         | —                                    |
 | AI Agent      | http://localhost:5000         | —                                    |
-| ngrok UI      | http://localhost:4040         | Only with `--profile ngrok`          |
 
-### Native (Development)
+**Settings (Dashboard > Settings > n8n):**
+
+| Setting | Value |
+|---------|-------|
+| n8n URL | `http://n8n:5678` |
+| Webhook Base URL | *(leave empty)* |
+
+**IAS Redirect URI (register in IAS admin):**
+```
+http://localhost:3001/api/auth/callback
+```
+
+---
+
+### Mode 2: Docker with ngrok (share with colleagues via HTTPS)
+
+```bash
+# 1. Configure .env with your ngrok credentials
+cp .env.example .env
+# Edit: NGROK_AUTHTOKEN=your-token
+# Edit: NGROK_DOMAIN=your-app.ngrok-free.app
+
+# 2. Start with ngrok profile
+docker-compose --profile ngrok up --build -d
+```
+
+The ngrok tunnel acts as an **approuter** — all services are accessible through one HTTPS domain:
+
+| Path | Service | URL |
+|------|---------|-----|
+| `/` | Dashboard | `https://your-app.ngrok-free.app` |
+| `/api/` | Backend API | `https://your-app.ngrok-free.app/api/...` |
+| `/webhook/` | n8n Webhooks | `https://your-app.ngrok-free.app/webhook/...` |
+| `/webhook-test/` | n8n Test Webhooks | `https://your-app.ngrok-free.app/webhook-test/...` |
+| `/mailpit/` | Email UI | `https://your-app.ngrok-free.app/mailpit/` |
+| `/pgadmin/` | DB Admin | `https://your-app.ngrok-free.app/pgadmin/` |
+
+> **Note:** n8n editor is accessed directly at `http://localhost:5678` (developer tool, not exposed via ngrok).
+
+**n8n Webhook URLs (for use in workflows or external systems):**
+
+```
+https://your-app.ngrok-free.app/webhook/bupa-sync
+https://your-app.ngrok-free.app/webhook/bupa-sync-retry
+https://your-app.ngrok-free.app/webhook/bupa-sync-agent-fix
+```
+
+**Settings (Dashboard > Settings > n8n):**
+
+| Setting | Value |
+|---------|-------|
+| n8n URL | `http://n8n:5678` |
+| Webhook Base URL | `https://your-app.ngrok-free.app` |
+
+**IAS Redirect URIs (register BOTH in IAS admin):**
+```
+http://localhost:3001/api/auth/callback
+https://your-app.ngrok-free.app/api/auth/callback
+```
+
+> The OIDC redirect URI is auto-derived from the request origin. No configuration needed in the app — just register both URIs in IAS.
+
+**ngrok inspection UI:** http://localhost:4040
+
+---
+
+### Mode 3: Native (development without Docker)
 
 **Prerequisites:**
 - Python 3.13+
 - Node.js 18+
 - n8n (installed globally or via Docker)
+- Hyperspace LLM Proxy running on port 6655
 
 **Steps:**
 
@@ -167,6 +241,19 @@ start-local.bat        # Windows
 | Backend API   | http://localhost:8080         |
 | n8n Editor    | http://localhost:5678         |
 
+**Settings (Dashboard > Settings > n8n):**
+
+| Setting | Value |
+|---------|-------|
+| n8n URL | `http://localhost:5678` |
+| Webhook Base URL | *(leave empty)* |
+| LLM Base URL | `http://localhost:6655/litellm/v1` |
+
+**IAS Redirect URI (register in IAS admin):**
+```
+http://localhost:5173/api/auth/callback
+```
+
 ---
 
 ## Configuration
@@ -182,37 +269,9 @@ All configuration is managed through the **Settings** page in the dashboard (`/s
 | LLM Proxy             | AI Core / GenAI Hub endpoint and credentials   |
 | SMTP                  | Mail server host, port, sender address         |
 | Mock S/4HANA          | Base URL for the SAP mock service              |
-| ngrok                 | Auth token, domain for webhook tunneling       |
 | Qdrant                | Vector DB URL for RAG/embeddings               |
 
 Settings are persisted in the database and can be modified at runtime without restart.
-
-### ngrok (Optional Webhook Tunneling)
-
-ngrok exposes your local n8n webhooks to the internet, useful for receiving external callbacks.
-
-**Setup:**
-
-1. Copy the env example and set your ngrok credentials:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your NGROK_AUTHTOKEN and NGROK_DOMAIN
-   ```
-
-2. Start with the ngrok profile:
-   ```bash
-   docker-compose --profile ngrok up --build -d
-   ```
-
-3. Set the **n8n Webhook URL** (in Dashboard > Settings > n8n) to your ngrok domain:
-   ```
-   https://my-app.ngrok-free.app
-   ```
-
-4. The ngrok inspection UI is available at http://localhost:4040
-
-> **Note:** ngrok auth token and domain are configured via `.env` file (not the Settings page)
-> because they are required at container startup time before the backend is available.
 
 ---
 
