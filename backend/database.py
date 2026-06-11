@@ -152,6 +152,7 @@ _SQLITE_SCHEMA = """
         user_email TEXT NOT NULL,
         access_token TEXT,
         refresh_token TEXT,
+        groups TEXT DEFAULT '[]',
         expires_at TEXT,
         created_at TEXT NOT NULL
     );
@@ -188,6 +189,7 @@ _POSTGRES_SCHEMA = """
         user_email TEXT NOT NULL,
         access_token TEXT,
         refresh_token TEXT,
+        groups TEXT DEFAULT '[]',
         expires_at TEXT,
         created_at TEXT NOT NULL
     );
@@ -199,6 +201,13 @@ def init_db():
     with get_connection() as conn:
         if _USE_POSTGRES:
             conn.executescript(_POSTGRES_SCHEMA)
+            # Migration: add groups column if missing
+            try:
+                conn.execute(
+                    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS groups TEXT DEFAULT '[]'"
+                )
+            except Exception:
+                pass
         else:
             conn.executescript(_SQLITE_SCHEMA)
 
@@ -328,17 +337,18 @@ def create_session(
     user_email: str,
     access_token: str = "",
     refresh_token: str = "",
+    groups: str = "[]",
     expires_at: str = "",
 ):
     with get_connection() as conn:
         if _USE_POSTGRES:
             conn.execute(
-                "INSERT INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, expires_at, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "INSERT INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, groups, expires_at, created_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (session_id) DO UPDATE SET "
                 "user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name, "
                 "user_email = EXCLUDED.user_email, access_token = EXCLUDED.access_token, "
-                "refresh_token = EXCLUDED.refresh_token, expires_at = EXCLUDED.expires_at",
+                "refresh_token = EXCLUDED.refresh_token, groups = EXCLUDED.groups, expires_at = EXCLUDED.expires_at",
                 (
                     session_id,
                     user_id,
@@ -346,13 +356,14 @@ def create_session(
                     user_email,
                     access_token,
                     refresh_token,
+                    groups,
                     expires_at,
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
         else:
             conn.execute(
-                "INSERT OR REPLACE INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, groups, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     user_id,
@@ -360,6 +371,7 @@ def create_session(
                     user_email,
                     access_token,
                     refresh_token,
+                    groups,
                     expires_at,
                     datetime.now(timezone.utc).isoformat(),
                 ),

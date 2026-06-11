@@ -11,6 +11,7 @@ from routes.agent_proxy import router as agent_router
 from routes.sync_status import router as sync_router
 from routes.audit import router as audit_router
 from routes.auth_routes import router as auth_router
+from routes.authorization import router as authz_router
 
 
 @asynccontextmanager
@@ -49,6 +50,7 @@ app.include_router(agent_router, prefix="/api/agent", tags=["agent"])
 app.include_router(sync_router, prefix="/api/sync", tags=["sync"])
 app.include_router(audit_router, prefix="/api/audit", tags=["audit"])
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
+app.include_router(authz_router, prefix="/api/authz", tags=["authorization"])
 
 
 @app.get("/health")

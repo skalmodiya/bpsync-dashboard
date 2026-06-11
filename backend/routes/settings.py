@@ -50,6 +50,9 @@ async def update_settings(payload: Settings, request: Request) -> dict:
     payload.auth.client_secret = preserve_if_masked(
         payload.auth.client_secret, current.auth.client_secret
     )
+    payload.authorization.scim_password = preserve_if_masked(
+        payload.authorization.scim_password, current.authorization.scim_password
+    )
 
     save_settings(payload, user=user["user_id"])
     log_event(

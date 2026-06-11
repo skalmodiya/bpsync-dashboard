@@ -53,6 +53,18 @@ class AuthConfig(BaseModel):
     client_secret: str = ""
 
 
+class AuthorizationConfig(BaseModel):
+    """Role-to-IAS-group mapping for access control."""
+
+    enabled: bool = False  # When disabled, all authenticated users have full access
+    scim_user: str = ""  # SCIM API technical user (System as Administrator)
+    scim_password: str = ""  # SCIM API password
+    viewer_group: str = ""  # IAS group name for Viewer role
+    editor_group: str = ""  # IAS group name for Editor role
+    admin_group: str = ""  # IAS group name for Admin role
+    super_admin_group: str = ""  # IAS group name for Super Admin role
+
+
 class NgrokConfig(BaseModel):
     enabled: bool = False  # Whether ngrok tunnel is active
     authtoken: str = ""  # ngrok authentication token
@@ -71,6 +83,7 @@ class Settings(BaseModel):
     smtp: SmtpConfig = SmtpConfig()
     agent: AgentConfig = AgentConfig()
     auth: AuthConfig = AuthConfig()
+    authorization: AuthorizationConfig = AuthorizationConfig()
     ngrok: NgrokConfig = NgrokConfig()
     qdrant: QdrantConfig = QdrantConfig()
 
@@ -179,4 +192,8 @@ def mask_settings(settings: Settings) -> dict:
         data["auth"]["client_secret"] = mask_api_key(data["auth"]["client_secret"])
     if data["ngrok"]["authtoken"]:
         data["ngrok"]["authtoken"] = mask_api_key(data["ngrok"]["authtoken"])
+    if data["authorization"]["scim_password"]:
+        data["authorization"]["scim_password"] = mask_api_key(
+            data["authorization"]["scim_password"]
+        )
     return data

@@ -6,11 +6,12 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { ConfigPanel } from '../components/ConfigPanel';
+import { AuthorizationTab } from '../components/AuthorizationTab';
 import { showToast } from '../components/Toast';
 import { api } from '../lib/api';
 import type { Settings, N8nWorkflow, LLMModel } from '../types';
 import type { DashboardConfig } from '../hooks/useDashboardConfig';
-import { CheckCircle, XCircle, Loader2, Cpu, Workflow, Server, Mail, Rocket, Shield, Palette, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Cpu, Workflow, Server, Mail, Rocket, Shield, Palette, AlertTriangle, Lock } from 'lucide-react';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -21,6 +22,7 @@ const TABS = [
   { id: 's4hana', label: 'Mock S/4', icon: Server },
   { id: 'email', label: 'Email', icon: Mail },
   { id: 'auth', label: 'Auth', icon: Shield },
+  { id: 'authorization', label: 'Authorization', icon: Lock },
   { id: 'deployment', label: 'Deploy', icon: Rocket },
   { id: 'danger', label: 'Danger Zone', icon: AlertTriangle },
 ] as const;
@@ -683,6 +685,11 @@ export function SettingsPage() {
           </div>
         </div>
       </Card>
+      )}
+
+      {/* Authorization */}
+      {activeTab === 'authorization' && (
+        <AuthorizationTab />
       )}
 
       {/* Danger Zone */}

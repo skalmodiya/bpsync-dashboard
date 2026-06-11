@@ -108,6 +108,22 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
     # Decode ID token to get user info
     user_info = decode_token(id_token, settings.auth.ias_url, settings.auth.client_id)
 
+    # Fetch groups from userinfo endpoint
+    user_groups: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as userinfo_client:
+            userinfo_resp = await userinfo_client.get(
+                f"{settings.auth.ias_url}/oauth2/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if userinfo_resp.status_code == 200:
+                userinfo_data = userinfo_resp.json()
+                user_groups = userinfo_data.get("groups", [])
+    except Exception:
+        pass  # Groups will be empty if userinfo fails
+
+    import json as _json
+
     # Create session
     session_id = secrets.token_urlsafe(32)
     create_session(
@@ -116,6 +132,7 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
         user_name=user_info.get("name", user_info.get("given_name", "User")),
         user_email=user_info.get("email", ""),
         access_token=access_token,
+        groups=_json.dumps(user_groups),
         expires_at=str(token_data.get("expires_in", "3600")),
     )
 
