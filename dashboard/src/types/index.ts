@@ -76,9 +76,11 @@ export interface AgentHealth {
 
 export interface AgentInfo {
   name: string;
+  title?: string;
   description: string;
   version: string;
   capabilities: string[];
+  skills?: Array<{ id: string; name: string; description: string; tags?: string[] }>;
 }
 
 export interface AgentInvocation {

@@ -102,7 +102,7 @@ export function AgentPage() {
                 <span className="text-muted-foreground">Description:</span>
                 <p className="mt-1">{info.description}</p>
               </div>
-              {info.capabilities.length > 0 && (
+              {info.capabilities && info.capabilities.length > 0 && (
                 <div className="text-sm">
                   <span className="text-muted-foreground">Capabilities:</span>
                   <div className="flex flex-wrap gap-1.5 mt-1">
@@ -113,6 +113,19 @@ export function AgentPage() {
                       >
                         {cap}
                       </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {info.skills && info.skills.length > 0 && (
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Skills:</span>
+                  <div className="mt-1 space-y-1">
+                    {info.skills.map((skill) => (
+                      <div key={skill.id} className="text-xs">
+                        <span className="font-medium">{skill.name}</span>
+                        <span className="text-muted-foreground ml-1">— {skill.description}</span>
+                      </div>
                     ))}
                   </div>
                 </div>

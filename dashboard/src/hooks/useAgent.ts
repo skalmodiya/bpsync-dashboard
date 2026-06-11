@@ -24,9 +24,26 @@ export function useAgent() {
   }, []);
 
   const fetchInfo = useCallback(async () => {
-    const res = await api.get<AgentInfo>('/api/agent/info');
-    if (res.ok && res.data) {
-      setInfo(res.data);
+    const res = await api.get<any>('/api/agent/info');
+    if (res.ok && res.data && !res.data.error) {
+      const raw = res.data;
+      // Normalize capabilities: agent card returns an object, dashboard expects string[]
+      let capabilities: string[] = [];
+      if (Array.isArray(raw.capabilities)) {
+        capabilities = raw.capabilities;
+      } else if (raw.capabilities && typeof raw.capabilities === 'object') {
+        capabilities = Object.entries(raw.capabilities)
+          .filter(([, v]) => v === true)
+          .map(([k]) => k);
+      }
+      setInfo({
+        name: raw.title || raw.name || 'Unknown',
+        title: raw.title,
+        description: raw.description || '',
+        version: raw.version || '',
+        capabilities,
+        skills: raw.skills || [],
+      });
     }
   }, []);
 
