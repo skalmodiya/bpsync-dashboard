@@ -212,8 +212,12 @@ async def get_profile(request: Request):
                             "ias_tenant": settings.auth.ias_url,
                         }
                     )
-        except Exception:
-            pass  # Fall back to session data
+                else:
+                    profile["_userinfo_error"] = (
+                        f"IAS returned {resp.status_code}: {resp.text[:200]}"
+                    )
+        except Exception as e:
+            profile["_userinfo_error"] = f"Failed to fetch userinfo: {str(e)}"
 
     return profile
 
