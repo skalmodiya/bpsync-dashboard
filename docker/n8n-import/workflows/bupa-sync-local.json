@@ -1,0 +1,589 @@
+{
+  "name": "BUPA Sync - Local Services",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bupa-sync",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bupa-sync-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const run_id = `BUPA_SYNC_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;\n\nreturn [{\n  json: {\n    sync_scope: 'all_active',\n    dry_run: false,\n    run_id: run_id\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Set Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://mock-s4hana:8090/api/pa0000",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Read Active Employees",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://mock-s4hana:8090/api/lfb1",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Read Employee Vendors",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const employeeData = $('Read Active Employees').first().json;\nconst vendorData = $('Read Employee Vendors').first().json;\nconst params = $('Set Parameters').first().json;\n\n// Mock S/4 returns { count, results: [...] }\nconst employees = employeeData.results || employeeData.data || (Array.isArray(employeeData) ? employeeData : []);\nconst vendors = vendorData.results || vendorData.data || (Array.isArray(vendorData) ? vendorData : []);\n\n// Extract PERNRs from both sources\nconst employeePernrs = employees.map(e => e.PERNR || e.pernr || '');\nconst vendorPernrs = vendors.map(v => v.PERNR || v.pernr || '');\n\n// Combine and deduplicate\nconst allPernrs = [...new Set([...employeePernrs, ...vendorPernrs].filter(Boolean))];\n\nconsole.log(`[M1 Milestone] Population identified: ${allPernrs.length} unique employees`);\n\nreturn [{\n  json: {\n    total_employees: allPernrs.length,\n    employee_list: allPernrs,\n    run_id: params.run_id,\n    milestone: 'M1',\n    milestone_message: `Population count complete: ${allPernrs.length} employees in scope`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Merge and Count Population",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-s4hana:8090/api/bupa/sync/execute",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ pernr_list: $json.employee_list.slice(0, 50) }) }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Execute BUPA Sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Brief pause simulation (no actual wait node needed for local)\nreturn $input.all();"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000007",
+      "name": "Wait for Sync",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://mock-s4hana:8090/api/bupa/sync/status/{{ $('Execute BUPA Sync').first().json.job_id || 'latest' }}",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000008",
+      "name": "Check Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const status = $('Check Job Status').first().json;\nconst params = $('Merge and Count Population').first().json;\n\nconsole.log(`[M2 Milestone] Sync job completed. Status: ${status.status || 'completed'}`);\n\nreturn [{\n  json: {\n    ...status,\n    run_id: params.run_id,\n    total_employees: params.total_employees,\n    milestone: 'M2',\n    milestone_message: `Sync execution complete. Job status: ${status.status || 'completed'}`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000009",
+      "name": "M2 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://mock-s4hana:8090/api/bupa/sync/log",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Read Sync Error Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://mock-s4hana:8090/api/slg1/log",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000011",
+      "name": "Read SLG1 Log",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const syncData = $('Read Sync Error Log').first().json;\nconst slg1Data = $('Read SLG1 Log').first().json;\nconst context = $('M2 Milestone Log').first().json;\n\n// Mock S/4 returns { count, results } or plain array\nconst syncErrors = syncData.results || syncData.data || (Array.isArray(syncData) ? syncData : []);\nconst slg1Errors = slg1Data.results || slg1Data.data || (Array.isArray(slg1Data) ? slg1Data : []);\n\n// Normalize sync errors\nconst normalizedSync = syncErrors.map(e => ({\n  employee_id: e.PERNR || e.pernr || e.employee_id || '',\n  error_class: e.error_class || e.MSG_CLASS || 'SYNC_ERROR',\n  error_message: e.error_message || e.MESSAGE || e.msg || '',\n  error_source: 'BUPA_SYNC',\n  timestamp: e.timestamp || new Date().toISOString(),\n  related_bp_id: e.BP_ID || e.bp_id || e.related_bp_id || ''\n}));\n\n// Normalize SLG1 errors\nconst normalizedSlg1 = slg1Errors.map(e => ({\n  employee_id: e.PERNR || e.pernr || e.employee_id || '',\n  error_class: e.error_class || e.MSGID || 'SLG1_ERROR',\n  error_message: e.error_message || e.MSGTEXT || e.msg || '',\n  error_source: 'SLG1',\n  timestamp: e.timestamp || e.DATUM || new Date().toISOString(),\n  related_bp_id: e.BP_ID || e.bp_id || e.related_bp_id || ''\n}));\n\n// Combine and deduplicate by employee_id + error_message\nconst allErrors = [...normalizedSync, ...normalizedSlg1];\nconst seen = new Set();\nconst deduped = allErrors.filter(e => {\n  const key = `${e.employee_id}|${e.error_message}`;\n  if (seen.has(key)) return false;\n  seen.add(key);\n  return true;\n});\n\nconsole.log(`[M3 Milestone] Error consolidation: ${deduped.length} unique errors`);\n\nreturn [{\n  json: {\n    errors: deduped,\n    error_count: deduped.length,\n    run_id: context.run_id,\n    total_employees: context.total_employees,\n    milestone: 'M3',\n    milestone_message: `Error merge complete: ${deduped.length} unique errors identified`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000012",
+      "name": "Merge Errors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-errors",
+              "leftValue": "={{ $json.error_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000013",
+      "name": "Check Has Errors",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://bupa-sync-agent:5000/invoke",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: 'Analyze these BUPA sync errors and propose fixes:\\n\\n' + JSON.stringify($json.errors) }] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000014",
+      "name": "Invoke BUPA Sync Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2750,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const agentResponse = $('Invoke BUPA Sync Agent').first().json;\nconst context = $('Merge Errors').first().json;\n\n// Extract content from agent response\nlet responseContent = '';\nif (agentResponse.choices && agentResponse.choices[0]) {\n  responseContent = agentResponse.choices[0].message?.content || '';\n} else if (agentResponse.content) {\n  responseContent = agentResponse.content;\n} else if (agentResponse.response) {\n  responseContent = typeof agentResponse.response === 'string' ? agentResponse.response : JSON.stringify(agentResponse.response);\n} else {\n  responseContent = JSON.stringify(agentResponse);\n}\n\n// Try to parse fix proposals from the response\nlet fixProposals = [];\ntry {\n  // Look for JSON in the response\n  const jsonMatch = responseContent.match(/\\[[\\s\\S]*?\\]/)\n    || responseContent.match(/\\{[\\s\\S]*\"fixes\"[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    fixProposals = Array.isArray(parsed) ? parsed : (parsed.fixes || []);\n  }\n} catch (e) {\n  // If JSON parsing fails, create a single proposal from the text\n  fixProposals = [{\n    description: responseContent.substring(0, 500),\n    confidence_score: 0.6,\n    category: 'general'\n  }];\n}\n\n// Categorize by confidence\nconst high = fixProposals.filter(f => (f.confidence_score || 0) > 0.8);\nconst medium = fixProposals.filter(f => (f.confidence_score || 0) >= 0.5 && (f.confidence_score || 0) <= 0.8);\nconst low = fixProposals.filter(f => (f.confidence_score || 0) < 0.5);\n\nconsole.log(`[M4 Milestone] Agent analysis complete: ${fixProposals.length} fix proposals (${high.length} high, ${medium.length} medium, ${low.length} low confidence)`);\n\nreturn [{\n  json: {\n    fix_proposals: fixProposals,\n    high_confidence: high,\n    medium_confidence: medium,\n    low_confidence: low,\n    agent_raw_response: responseContent,\n    errors: context.errors,\n    error_count: context.error_count,\n    run_id: context.run_id,\n    total_employees: context.total_employees,\n    milestone: 'M4',\n    milestone_message: `Agent analysis complete: ${fixProposals.length} proposals generated`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000015",
+      "name": "Parse Agent Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// This path is taken when there are no errors\nconst context = $('Merge Errors').first().json;\n\nreturn [{\n  json: {\n    fix_proposals: [],\n    high_confidence: [],\n    medium_confidence: [],\n    low_confidence: [],\n    agent_raw_response: 'No errors detected - agent not invoked',\n    errors: [],\n    error_count: 0,\n    run_id: context.run_id,\n    total_employees: context.total_employees,\n    milestone: 'M4',\n    milestone_message: 'No errors found - skipping agent analysis'\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000016",
+      "name": "No Errors - Skip Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2750,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Gather data from whichever path was taken\nlet data;\ntry {\n  data = $('Parse Agent Response').first().json;\n} catch (e) {\n  data = $('No Errors - Skip Agent').first().json;\n}\n\nconst now = new Date().toISOString();\nconst errorsByCategory = {};\n(data.errors || []).forEach(e => {\n  const cat = e.error_class || 'UNKNOWN';\n  errorsByCategory[cat] = (errorsByCategory[cat] || 0) + 1;\n});\n\nconst successCount = data.total_employees - data.error_count;\nconst coveragePct = data.total_employees > 0\n  ? ((successCount / data.total_employees) * 100).toFixed(1)\n  : '100.0';\n\nconst report = [\n  '═══════════════════════════════════════════════════════════════',\n  '           BUPA SYNC RECONCILIATION REPORT',\n  '═══════════════════════════════════════════════════════════════',\n  '',\n  `Run ID:          ${data.run_id}`,\n  `Timestamp:       ${now}`,\n  '',\n  '─── POPULATION ────────────────────────────────────────────────',\n  `Total Employees in Scope:  ${data.total_employees}`,\n  `Successfully Synced:       ${successCount}`,\n  `Errors Encountered:        ${data.error_count}`,\n  `Coverage:                  ${coveragePct}%`,\n  '',\n  '─── ERROR BREAKDOWN ───────────────────────────────────────────',\n  ...Object.entries(errorsByCategory).map(([cat, count]) => `  ${cat}: ${count}`),\n  data.error_count === 0 ? '  No errors detected.' : '',\n  '',\n  '─── FIX PROPOSALS ─────────────────────────────────────────────',\n  `Total Proposals:       ${(data.fix_proposals || []).length}`,\n  `High Confidence:       ${(data.high_confidence || []).length}`,\n  `Medium Confidence:     ${(data.medium_confidence || []).length}`,\n  `Low Confidence:        ${(data.low_confidence || []).length}`,\n  '',\n  ...(data.fix_proposals || []).slice(0, 10).map((p, i) =>\n    `  [${i + 1}] (score: ${(p.confidence_score || 0).toFixed(2)}) ${p.description || p.fix || 'N/A'}`\n  ),\n  '',\n  '─── SUMMARY ───────────────────────────────────────────────────',\n  `Status: ${data.error_count === 0 ? 'SUCCESS - All employees synced' : 'ATTENTION REQUIRED - Errors detected'}`,\n  '',\n  '═══════════════════════════════════════════════════════════════',\n].join('\\n');\n\nreturn [{\n  json: {\n    report: report,\n    run_id: data.run_id,\n    total_employees: data.total_employees,\n    error_count: data.error_count,\n    coverage_pct: parseFloat(coveragePct),\n    fix_proposals_count: (data.fix_proposals || []).length\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000017",
+      "name": "Generate Reconciliation Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const report = $('Generate Reconciliation Report').first().json;\n\nconsole.log(`[M5 Milestone] Workflow complete. Run: ${report.run_id}, Coverage: ${report.coverage_pct}%, Errors: ${report.error_count}, Fixes proposed: ${report.fix_proposals_count}`);\nconsole.log('\\n' + report.report);\n\nreturn [{\n  json: {\n    ...report,\n    milestone: 'M5',\n    milestone_message: 'BUPA Sync workflow completed successfully',\n    completed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000018",
+      "name": "Final Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## M1 - Population Identification\nRead active employees and vendor links, merge and deduplicate.",
+        "height": 200,
+        "width": 550
+      },
+      "id": "a1b2c3d4-0001-4000-8000-100000000001",
+      "name": "Sticky Note - M1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        420,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## M2 - Sync Execution\nExecute BUPA sync, wait for completion, verify job status.",
+        "height": 200,
+        "width": 800
+      },
+      "id": "a1b2c3d4-0001-4000-8000-100000000002",
+      "name": "Sticky Note - M2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        920,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## M3 - Error Consolidation\nRead sync and SLG1 logs, normalize, deduplicate errors.",
+        "height": 200,
+        "width": 550
+      },
+      "id": "a1b2c3d4-0001-4000-8000-100000000003",
+      "name": "Sticky Note - M3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1920,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## M4 - Agent Analysis\nInvoke BUPA Sync Agent to analyze errors and propose fixes.\nCategorize proposals by confidence score.",
+        "height": 200,
+        "width": 550
+      },
+      "id": "a1b2c3d4-0001-4000-8000-100000000004",
+      "name": "Sticky Note - M4",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2670,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## M5 - Report & Completion\nGenerate reconciliation report with coverage metrics and output final results.",
+        "height": 200,
+        "width": 550
+      },
+      "id": "a1b2c3d4-0001-4000-8000-100000000005",
+      "name": "Sticky Note - M5",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3170,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Parameters": {
+      "main": [
+        [
+          {
+            "node": "Read Active Employees",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Active Employees": {
+      "main": [
+        [
+          {
+            "node": "Read Employee Vendors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Employee Vendors": {
+      "main": [
+        [
+          {
+            "node": "Merge and Count Population",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge and Count Population": {
+      "main": [
+        [
+          {
+            "node": "Execute BUPA Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute BUPA Sync": {
+      "main": [
+        [
+          {
+            "node": "Wait for Sync",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Sync": {
+      "main": [
+        [
+          {
+            "node": "Check Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Job Status": {
+      "main": [
+        [
+          {
+            "node": "M2 Milestone Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "M2 Milestone Log": {
+      "main": [
+        [
+          {
+            "node": "Read Sync Error Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Sync Error Log": {
+      "main": [
+        [
+          {
+            "node": "Read SLG1 Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read SLG1 Log": {
+      "main": [
+        [
+          {
+            "node": "Merge Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Errors": {
+      "main": [
+        [
+          {
+            "node": "Check Has Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Has Errors": {
+      "main": [
+        [
+          {
+            "node": "Invoke BUPA Sync Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Errors - Skip Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invoke BUPA Sync Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Agent Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Agent Response": {
+      "main": [
+        [
+          {
+            "node": "Generate Reconciliation Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Errors - Skip Agent": {
+      "main": [
+        [
+          {
+            "node": "Generate Reconciliation Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Reconciliation Report": {
+      "main": [
+        [
+          {
+            "node": "Final Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "bupa-sync"
+    },
+    {
+      "name": "local-testing"
+    }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2026-06-10T00:00:00Z",
+  "versionId": "1",
+  "id": "bupa-sync-main-001"
+}

@@ -1,0 +1,111 @@
+# ============================================
+# BUPA Sync Automation - .gitignore
+# ============================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+env/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---------- Node.js ----------
+node_modules/
+.next/
+*.tsbuildinfo
+
+# ---------- Data / Runtime ----------
+*.db
+*.sqlite
+*.sqlite3
+backend/data/settings.json
+backend/data/audit.log
+backend/data/agent_logs/
+!backend/data/.gitkeep
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# ---------- OS ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- Docker (volumes only, not compose files) ----------
+docker-volumes/
+
+# ---------- Environment ----------
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# ---------- Build Artifacts ----------
+dashboard/dist/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------- Secrets ----------
+# Ignore secret/credential files but not Docker config
+*secret*.json
+*credential*.json
+!backend/docker-settings.json
+
+# ---------- Ruff (Python Linter) ----------
+.ruff_cache/
+
+# ---------- Coverage / Testing ----------
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ---------- Jupyter (if any) ----------
+.ipynb_checkpoints/
+
+# ---------- Temporary ----------
+*.tmp
+*.bak
+*.orig
+
+# ---------- SAP-specific keys (sensitive) ----------
+defaultKey_*.json
+
+# ---------- Local config / tools ----------
+.mcp.json
+opencode.json
+.claude/
+*.pptx
+Client ID*.txt
+
+# ---------- Keep these (needed for builds) ----------
+!backend/docker-settings.json
+!backend/data/.gitkeep

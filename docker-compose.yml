@@ -1,0 +1,140 @@
+# BUPA Sync Automation - Full Local Docker Stack
+# Run: docker-compose up --build
+# Access: Dashboard at http://localhost:3001
+
+services:
+  # React Dashboard (Vite production build served by nginx)
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3001:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - bpsync
+
+  # Backend API (FastAPI - settings, proxy, orchestration)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8080"
+    volumes:
+      - backend-data:/app/data
+    environment:
+      - DEPLOYMENT_MODE=docker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      mock-s4hana:
+        condition: service_healthy
+    networks:
+      - bpsync
+
+  # BUPA Sync Agent (Python A2A)
+  bupa-sync-agent:
+    build:
+      context: ./assets/bupa-sync-agent
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - backend-data:/app/shared-data
+    environment:
+      - SETTINGS_PATH=/app/shared-data/settings.json
+      - DEPLOYMENT_MODE=docker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - bpsync
+
+  # Mock S/4HANA (simulates SAP backend)
+  mock-s4hana:
+    build:
+      context: ./mock-s4hana
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/pa0000"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - bpsync
+
+  # n8n Workflow Engine (pre-loaded with BUPA Sync workflows)
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://n8n:5678
+      - N8N_SECURE_COOKIE=false
+      - N8N_RUNNERS_ENABLED=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:5678/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - bpsync
+
+  # n8n Workflow Importer (runs once to import workflows)
+  n8n-import:
+    build:
+      context: ./docker/n8n-import
+      dockerfile: Dockerfile
+    depends_on:
+      n8n:
+        condition: service_healthy
+    networks:
+      - bpsync
+    restart: "no"
+
+  # Mailpit (local SMTP + web UI for email testing)
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8025/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - bpsync
+
+volumes:
+  backend-data:
+  n8n-data:
+
+networks:
+  bpsync:
+    driver: bridge

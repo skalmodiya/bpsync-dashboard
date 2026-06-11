@@ -1,0 +1,39 @@
+# Known BUPA sync error patterns for classification
+# Each category contains regex patterns that match SLG1 error messages
+
+error_patterns:
+  MISSING_ADDRESS:
+    - "No address maintained"
+    - "Address data incomplete"
+    - "Business partner address required"
+    - "Address.*(missing|not found|required)"
+
+  DUPLICATE_BP:
+    - "Duplicate business partner"
+    - "BP already exists for employee"
+    - "Multiple BP records found"
+    - "Duplicate.*(BP|business partner)"
+
+  INVALID_PERNR:
+    - "Personnel number not found"
+    - "Invalid PERNR format"
+    - "Employee number mismatch"
+    - "PERNR.*(invalid|not found|mismatch)"
+
+  BANK_DATA_MISMATCH:
+    - "Bank details inconsistent"
+    - "Bank key invalid"
+    - "IBAN validation failed"
+    - "Bank.*(mismatch|inconsistent|invalid)"
+
+  IDENTIFICATION_MISSING:
+    - "ID document required"
+    - "No identification maintained"
+    - "Tax number missing"
+    - "Identification.*(missing|required|not maintained)"
+
+  CONFIG_MISMATCH:
+    - "BP category mismatch"
+    - "Grouping not maintained"
+    - "CVI mapping error"
+    - "(category|grouping|CVI).*(mismatch|error|not maintained)"

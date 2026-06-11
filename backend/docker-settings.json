@@ -1,0 +1,39 @@
+{
+  "deployment_mode": "docker",
+  "llm": {
+    "provider": "local_proxy",
+    "base_url": "http://host.docker.internal:6655/litellm/v1",
+    "model": "anthropic--claude-4.6-sonnet",
+    "api_key": ""
+  },
+  "n8n": {
+    "url": "http://n8n:5678",
+    "api_key": "",
+    "workflow_id": "",
+    "retry_workflow_id": "",
+    "agent_fix_workflow_id": "",
+    "monitored_workflow_ids": [],
+    "webhook_url": "http://n8n:5678"
+  },
+  "mock_s4": {
+    "url": "http://mock-s4hana:8090"
+  },
+  "smtp": {
+    "host": "mailpit",
+    "port": 1025,
+    "username": "",
+    "password": ""
+  },
+  "agent": {
+    "url": "http://bupa-sync-agent:5000"
+  },
+  "auth": {
+    "ias_url": "",
+    "client_id": "",
+    "client_secret": "",
+    "redirect_uri": "http://localhost:3001/api/auth/callback"
+  },
+  "jobs": {
+    "threshold": 5
+  }
+}

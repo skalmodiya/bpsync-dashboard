@@ -1,0 +1,20 @@
+[run]
+source = app
+omit =
+    */tests/*
+    */prebuilt_tests/*
+    */__pycache__/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if __name__ == .__main__
+    raise NotImplementedError
+    pass
+    except ImportError
+show_missing = true
+precision = 2
+
+[html]
+directory = htmlcov

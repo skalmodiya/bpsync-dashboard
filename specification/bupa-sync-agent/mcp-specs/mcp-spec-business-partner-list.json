@@ -1,0 +1,42 @@
+{
+  "name": "list_business_partner",
+  "title": "list_A_BusinessPartner",
+  "description": "Retrieve a list of entities from the A_BusinessPartner collection. Supports OData query options for filtering, sorting, ranking ($top), skipping ($skip), expanding related entities, counting, selecting specific properties.",
+  "mcpServerOrdId": "sap.mcpbuilder:apiResource:business_partner_mcp_demo:v1",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [],
+    "properties": {
+      "filter": { "type": "string", "description": "OData $filter expression" },
+      "select": { "type": "string", "description": "Comma-separated list of property names" },
+      "orderby": { "type": "string", "description": "Sort by property asc/desc" },
+      "top": { "type": "integer", "description": "Max entities to return", "minimum": 0 },
+      "skip": { "type": "integer", "description": "Skip N results", "minimum": 0 },
+      "expand": { "type": "string", "description": "Include related entities" },
+      "inlinecount": { "type": "string", "enum": ["allpages", "none"] }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "BusinessPartner": { "type": "string", "maxLength": 10 },
+            "Customer": { "type": ["string", "null"], "maxLength": 10 },
+            "Supplier": { "type": ["string", "null"], "maxLength": 10 },
+            "BusinessPartnerCategory": { "type": ["string", "null"], "maxLength": 1 },
+            "BusinessPartnerFullName": { "type": ["string", "null"], "maxLength": 81 },
+            "FirstName": { "type": ["string", "null"], "maxLength": 40 },
+            "LastName": { "type": ["string", "null"], "maxLength": 40 },
+            "PersonNumber": { "type": ["string", "null"], "maxLength": 10 },
+            "BusinessPartnerIDByExtSystem": { "type": ["string", "null"], "maxLength": 20 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "get_business_partner",
+  "title": "get_A_BusinessPartner",
+  "description": "Retrieve a single Business Partner entity by its key (BusinessPartner ID). Supports $select and $expand.",
+  "mcpServerOrdId": "sap.mcpbuilder:apiResource:business_partner_mcp_demo:v1",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["businesspartner"],
+    "properties": {
+      "businesspartner": { "type": "string", "maxLength": 10, "description": "Key property BusinessPartner" },
+      "select": { "type": "string", "description": "Comma-separated list of property names" },
+      "expand": { "type": "string", "description": "Include related entities" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "BusinessPartner": { "type": "string", "maxLength": 10 },
+      "Customer": { "type": ["string", "null"], "maxLength": 10 },
+      "Supplier": { "type": ["string", "null"], "maxLength": 10 },
+      "BusinessPartnerCategory": { "type": ["string", "null"], "maxLength": 1 },
+      "BusinessPartnerFullName": { "type": ["string", "null"], "maxLength": 81 },
+      "FirstName": { "type": ["string", "null"], "maxLength": 40 },
+      "LastName": { "type": ["string", "null"], "maxLength": 40 },
+      "PersonNumber": { "type": ["string", "null"], "maxLength": 10 },
+      "BusinessPartnerIDByExtSystem": { "type": ["string", "null"], "maxLength": 20 },
+      "to_BusinessPartnerAddress": { "type": "array", "items": { "type": ["object", "null"] } },
+      "to_BPEmployment": { "type": "array", "items": { "type": ["object", "null"] } },
+      "to_BuPaIdentification": { "type": "array", "items": { "type": ["object", "null"] } },
+      "to_BusinessPartnerBank": { "type": "array", "items": { "type": ["object", "null"] } }
+    }
+  }
+}

@@ -1,0 +1,213 @@
+"""Authentication routes for SAP IAS OIDC flow."""
+
+import secrets
+import urllib.parse
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, Request
+from fastapi.responses import RedirectResponse, JSONResponse
+
+from config import load_settings
+from database import create_session, get_session, delete_session
+from auth import decode_token
+
+router = APIRouter()
+
+
+@router.get("/login")
+async def login(request: Request):
+    """Redirect to IAS authorization endpoint."""
+    settings = load_settings()
+    if not settings.auth.ias_url or not settings.auth.client_id:
+        return JSONResponse(
+            {"error": "IAS not configured. Configure in Settings → Auth tab."},
+            status_code=400,
+        )
+
+    state = secrets.token_urlsafe(32)
+    # Store state in a cookie for CSRF protection
+    params = {
+        "response_type": "code",
+        "client_id": settings.auth.client_id,
+        "redirect_uri": settings.auth.redirect_uri
+        or "http://localhost:3001/auth/callback",
+        "scope": "openid email profile",
+        "state": state,
+    }
+    auth_url = (
+        f"{settings.auth.ias_url}/oauth2/authorize?{urllib.parse.urlencode(params)}"
+    )
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        "oauth_state", state, httponly=True, max_age=600, samesite="lax"
+    )
+    return response
+
+
+@router.get("/callback")
+async def callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    """Handle IAS callback with authorization code."""
+    if error:
+        return JSONResponse({"error": f"IAS error: {error}"}, status_code=400)
+
+    settings = load_settings()
+
+    # Exchange code for token
+    token_url = f"{settings.auth.ias_url}/oauth2/token"
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            token_url,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.auth.redirect_uri
+                or "http://localhost:3001/auth/callback",
+                "client_id": settings.auth.client_id,
+                "client_secret": settings.auth.client_secret,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    if resp.status_code != 200:
+        return JSONResponse(
+            {"error": f"Token exchange failed: {resp.text}"}, status_code=400
+        )
+
+    token_data = resp.json()
+    id_token = token_data.get("id_token", "")
+    access_token = token_data.get("access_token", "")
+
+    # Decode ID token to get user info
+    user_info = decode_token(id_token, settings.auth.ias_url, settings.auth.client_id)
+
+    # Create session
+    session_id = secrets.token_urlsafe(32)
+    create_session(
+        session_id=session_id,
+        user_id=user_info.get("sub", "unknown"),
+        user_name=user_info.get("name", user_info.get("given_name", "User")),
+        user_email=user_info.get("email", ""),
+        access_token=access_token,
+        expires_at=str(token_data.get("expires_in", "3600")),
+    )
+
+    # Redirect to dashboard with session cookie
+    response = RedirectResponse(url="/")
+    response.set_cookie(
+        "session_id", session_id, httponly=True, max_age=3600, samesite="lax"
+    )
+    response.delete_cookie("oauth_state")
+    return response
+
+
+@router.get("/me")
+async def get_me(request: Request):
+    """Get current authenticated user info."""
+    from auth import get_optional_user
+
+    user = get_optional_user(request)
+    return user
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """Logout - destroy session and redirect to IAS logout."""
+    settings = load_settings()
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        delete_session(session_id)
+
+    # Build IAS logout URL
+    ias_logout_url = ""
+    if settings.auth.ias_url:
+        post_logout_redirect = "http://localhost:3001"
+        params = urllib.parse.urlencode(
+            {
+                "post_logout_redirect_uri": post_logout_redirect,
+                "client_id": settings.auth.client_id,
+            }
+        )
+        ias_logout_url = f"{settings.auth.ias_url}/oauth2/logout?{params}"
+
+    response = JSONResponse(
+        {
+            "status": "logged_out",
+            "ias_logout_url": ias_logout_url,
+        }
+    )
+    response.delete_cookie("session_id")
+    return response
+
+
+@router.get("/profile")
+async def get_profile(request: Request):
+    """Get detailed profile info for the current user from IAS userinfo endpoint."""
+    settings = load_settings()
+    session_id = request.cookies.get("session_id")
+    if not session_id:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    session = get_session(session_id)
+    if not session:
+        return JSONResponse({"error": "Session expired"}, status_code=401)
+
+    # Call IAS userinfo endpoint with access token
+    profile = {
+        "user_id": session["user_id"],
+        "name": session["user_name"],
+        "email": session["user_email"],
+        "raw_userinfo": None,
+    }
+
+    if settings.auth.ias_url and session.get("access_token"):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{settings.auth.ias_url}/oauth2/userinfo",
+                    headers={"Authorization": f"Bearer {session['access_token']}"},
+                )
+                if resp.status_code == 200:
+                    userinfo = resp.json()
+                    profile["raw_userinfo"] = userinfo
+                    profile.update(
+                        {
+                            "name": userinfo.get("name", profile["name"]),
+                            "email": userinfo.get("email", profile["email"]),
+                            "given_name": userinfo.get("given_name", ""),
+                            "family_name": userinfo.get("family_name", ""),
+                            "global_user_id": userinfo.get(
+                                "user_uuid",
+                                userinfo.get("global_user_id", userinfo.get("sub", "")),
+                            ),
+                            "groups": userinfo.get("groups", []),
+                            "ias_tenant": settings.auth.ias_url,
+                        }
+                    )
+        except Exception:
+            pass  # Fall back to session data
+
+    return profile
+
+
+@router.get("/status")
+async def auth_status(request: Request):
+    """Check if IAS is configured and if user is authenticated."""
+    settings = load_settings()
+    ias_configured = bool(settings.auth.ias_url and settings.auth.client_id)
+
+    session_id = request.cookies.get("session_id")
+    authenticated = False
+    user = None
+    if session_id:
+        session = get_session(session_id)
+        if session:
+            authenticated = True
+            user = {"name": session["user_name"], "email": session["user_email"]}
+
+    return {
+        "ias_configured": ias_configured,
+        "authenticated": authenticated,
+        "user": user,
+        "login_url": "/api/auth/login" if ias_configured else None,
+    }

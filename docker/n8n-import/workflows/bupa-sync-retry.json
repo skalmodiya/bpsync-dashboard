@@ -1,0 +1,139 @@
+{
+  "name": "BUPA Sync - Retry",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bupa-sync-retry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1000001-0001-4000-8000-000000000001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bupa-sync-retry-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst pernrList = input.pernr_list || [];\nconst mode = input.mode || 'selected';\nconst categories = input.categories || [];\nconst triggeredBy = input.triggered_by || 'unknown';\n\nconsole.log(`[RETRY] Triggered by ${triggeredBy}, mode=${mode}, pernrs=${pernrList.length}, categories=${categories.join(',')}`);\n\nreturn [{ json: { pernr_list: pernrList, mode, categories, triggered_by: triggeredBy, timestamp: new Date().toISOString() } }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000002",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-s4hana:8090/api/bupa/sync/retry",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ pernr_list: $json.pernr_list }) }}",
+        "options": {}
+      },
+      "id": "b1000001-0001-4000-8000-000000000003",
+      "name": "Execute Retry via Mock S4",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $('Parse Request').first().json;\nconst retryResult = $('Execute Retry via Mock S4').first().json;\n\nconst result = {\n  status: 'completed',\n  action: 'retry_sync',\n  pernr_count: request.pernr_list.length,\n  mode: request.mode,\n  triggered_by: request.triggered_by,\n  result: retryResult,\n  completed_at: new Date().toISOString()\n};\n\nconsole.log(`[RETRY COMPLETE] ${result.pernr_count} employees processed`);\n\nreturn [{ json: result }];"
+      },
+      "id": "b1000001-0001-4000-8000-000000000004",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "b1000001-0001-4000-8000-000000000005",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "node": "Execute Retry via Mock S4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Retry via Mock S4": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "bupa-sync"
+    }
+  ],
+  "id": "bupa-sync-retry-001"
+}

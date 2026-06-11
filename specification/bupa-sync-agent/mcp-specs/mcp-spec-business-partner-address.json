@@ -1,0 +1,30 @@
+{
+  "name": "get_business_partner_address",
+  "title": "get_A_BusinessPartnerAddress",
+  "description": "Retrieve a single Business Partner Address by composite key (BusinessPartner + AddressID). Supports $select and $expand.",
+  "mcpServerOrdId": "sap.mcpbuilder:apiResource:business_partner_mcp_demo:v1",
+  "inputSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["businesspartner", "addressid"],
+    "properties": {
+      "businesspartner": { "type": "string", "maxLength": 10, "description": "Key property BusinessPartner" },
+      "addressid": { "type": "string", "maxLength": 10, "description": "Key property AddressID" },
+      "select": { "type": "string", "description": "Comma-separated list of property names" },
+      "expand": { "type": "string", "description": "Include related entities" }
+    }
+  },
+  "outputSchema": {
+    "type": "object",
+    "properties": {
+      "BusinessPartner": { "type": "string", "maxLength": 10 },
+      "AddressID": { "type": "string", "maxLength": 10 },
+      "CityName": { "type": ["string", "null"], "maxLength": 40 },
+      "Country": { "type": ["string", "null"], "maxLength": 3 },
+      "PostalCode": { "type": ["string", "null"], "maxLength": 10 },
+      "StreetName": { "type": ["string", "null"], "maxLength": 60 },
+      "HouseNumber": { "type": ["string", "null"], "maxLength": 10 },
+      "Region": { "type": ["string", "null"], "maxLength": 3 }
+    }
+  }
+}

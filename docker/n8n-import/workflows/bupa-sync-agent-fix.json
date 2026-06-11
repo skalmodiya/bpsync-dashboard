@@ -1,0 +1,141 @@
+{
+  "name": "BUPA Sync - Agent Fix",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bupa-sync-agent-fix",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "c1000001-0001-4000-8000-000000000001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "bupa-sync-agent-fix-webhook"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst errors = input.errors || [];\nconst pernrList = input.pernr_list || [];\nconst categories = input.categories || [];\nconst triggeredBy = input.triggered_by || 'unknown';\n\nconsole.log(`[AGENT FIX] Triggered by ${triggeredBy}, errors=${errors.length}, categories=${categories.join(',')}`);\n\n// Build agent message\nconst agentMessage = `Analyze these ${errors.length} BUPA sync errors and propose fixes. For each error, provide: error category, root cause, proposed fix action, target table/field, current value, proposed value, and confidence score (0-1).\\n\\nErrors:\\n${JSON.stringify(errors, null, 2)}`;\n\nreturn [{ json: { agent_message: agentMessage, errors, pernr_list: pernrList, categories, triggered_by: triggeredBy } }];"
+      },
+      "id": "c1000001-0001-4000-8000-000000000002",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://bupa-sync-agent:5000/invoke",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: $json.agent_message }] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c1000001-0001-4000-8000-000000000003",
+      "name": "Call AI Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const request = $('Parse Request').first().json;\nconst agentResult = $('Call AI Agent').first().json;\n\n// Extract agent response content\nlet agentResponse = '';\nif (agentResult.result && agentResult.result.content) {\n  agentResponse = agentResult.result.content;\n} else if (agentResult.content) {\n  agentResponse = agentResult.content;\n} else {\n  agentResponse = JSON.stringify(agentResult);\n}\n\nconst result = {\n  status: 'completed',\n  action: 'agent_fix',\n  errors_analyzed: request.errors.length,\n  pernr_count: request.pernr_list.length,\n  agent_response: agentResponse,\n  triggered_by: request.triggered_by,\n  completed_at: new Date().toISOString()\n};\n\nconsole.log(`[AGENT FIX COMPLETE] ${request.errors.length} errors analyzed`);\n\nreturn [{ json: result }];"
+      },
+      "id": "c1000001-0001-4000-8000-000000000004",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "c1000001-0001-4000-8000-000000000005",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Request": {
+      "main": [
+        [
+          {
+            "node": "Call AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "bupa-sync"
+    }
+  ],
+  "id": "bupa-sync-agentfix-001"
+}

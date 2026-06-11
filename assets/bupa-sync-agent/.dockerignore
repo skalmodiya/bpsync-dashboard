@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+.git
+.ruff_cache
+*.db
+tests/
+prebuilt_tests/
+.coveragerc
+conftest.py
+pytest.ini
+requirements-test.txt

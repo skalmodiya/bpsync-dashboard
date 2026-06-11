@@ -1,0 +1,1090 @@
+{
+  "name": "BUPA Sync Orchestration",
+  "description": "End-to-end BUPA Sync orchestration workflow. Selects active employee population, triggers SAP BUPA synchronization, extracts and analyzes errors via AI agent, routes fixes through approval, applies approved corrections, retries failed records, and sends a reconciliation report.",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Entry point: set workflow parameters\nconst sync_scope = $input.first().json.sync_scope || 'all_active';\nconst employee_list = $input.first().json.employee_list || [];\nconst dry_run = $input.first().json.dry_run === true;\n\nreturn [{\n  json: {\n    sync_scope,\n    employee_list,\n    dry_run,\n    workflow_start: new Date().toISOString(),\n    run_id: `BUPA_SYNC_${Date.now()}`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000002",
+      "name": "Set Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 600]
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "read_pa0000_active_employees",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ infotype: '0000', status: '3', date: new Date().toISOString().slice(0,10) }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000003",
+      "name": "Read Active Employees",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [480, 480],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "read_lfb1_vendor_employees",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ table: 'LFB1', fields: ['LIFNR', 'PERNR'], where: \"PERNR <> ''\" }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000004",
+      "name": "Read Employee Vendors",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [480, 760],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge, deduplicate, and chunk into batches of 500\nconst params = $('Set Parameters').first().json;\nconst activeEmployees = $('Read Active Employees').first().json.result || [];\nconst vendorEmployees = $('Read Employee Vendors').first().json.result || [];\n\n// Extract PERNRs from both sources\nlet pernrSet = new Set();\n\nif (params.sync_scope === 'specific_list' && params.employee_list.length > 0) {\n  params.employee_list.forEach(p => pernrSet.add(String(p)));\n} else {\n  // Add active employees\n  if (Array.isArray(activeEmployees)) {\n    activeEmployees.forEach(emp => {\n      if (emp.PERNR) pernrSet.add(String(emp.PERNR));\n    });\n  }\n  // Add vendor employees if scope includes them\n  if (params.sync_scope === 'all_active' || params.sync_scope === 'vendors_only') {\n    if (Array.isArray(vendorEmployees)) {\n      vendorEmployees.forEach(emp => {\n        if (emp.PERNR) pernrSet.add(String(emp.PERNR));\n      });\n    }\n  }\n}\n\nconst allPernrs = Array.from(pernrSet);\n\n// Chunk into batches of 500\nconst BATCH_SIZE = 500;\nconst batches = [];\nfor (let i = 0; i < allPernrs.length; i += BATCH_SIZE) {\n  batches.push(allPernrs.slice(i, i + BATCH_SIZE));\n}\n\nreturn [{\n  json: {\n    total_employees: allPernrs.length,\n    batch_count: batches.length,\n    batches,\n    sync_scope: params.sync_scope,\n    dry_run: params.dry_run,\n    run_id: params.run_id\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000005",
+      "name": "Merge and Chunk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "dry-run-check",
+              "leftValue": "={{ $json.dry_run }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000006",
+      "name": "Is Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [960, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// M1 Milestone: Population Selection complete\nconst data = $('Merge and Chunk').first().json;\n\nreturn [{\n  json: {\n    ...data,\n    milestone: 'M1',\n    milestone_name: 'Population Selection',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M1 complete: ${data.total_employees} employees selected in ${data.batch_count} batches. Dry run mode - no sync executed.`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000007",
+      "name": "M1 Dry Run Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 480]
+    },
+    {
+      "parameters": {
+        "jsCode": "// M1 Milestone: Population Selection complete - proceeding to sync\nconst data = $('Merge and Chunk').first().json;\n\nreturn [{\n  json: {\n    ...data,\n    milestone: 'M1',\n    milestone_name: 'Population Selection',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M1 complete: ${data.total_employees} employees selected in ${data.batch_count} batches. Proceeding to BUPA sync.`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000008",
+      "name": "M1 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 720]
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "schedule_bupa_sync_job",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ job_name: 'BUPA_SYNC_' + $json.run_id, employee_batches: $json.batches, batch_count: $json.batch_count, total_employees: $json.total_employees }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000009",
+      "name": "Schedule BUPA Sync Job",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [1460, 720],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "interval": 60,
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000010",
+      "name": "Wait for Sync",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1680, 720]
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "check_job_status",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ job_id: $('Schedule BUPA Sync Job').first().json.result.job_id }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000011",
+      "name": "Check Job Status",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [1900, 720],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.status }}",
+                    "rightValue": "completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Completed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.status }}",
+                    "rightValue": "failed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Failed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.status }}",
+                    "rightValue": "running",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Running"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000012",
+      "name": "Job Status Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [2120, 720]
+    },
+    {
+      "parameters": {
+        "jsCode": "// M2 Milestone: BUPA Sync Execution complete\nconst jobResult = $('Check Job Status').first().json.result;\nconst params = $('Merge and Chunk').first().json;\n\nreturn [{\n  json: {\n    ...params,\n    job_id: $('Schedule BUPA Sync Job').first().json.result.job_id,\n    job_status: jobResult.status,\n    synced_count: jobResult.synced_count || 0,\n    error_count: jobResult.error_count || 0,\n    milestone: 'M2',\n    milestone_name: 'BUPA Sync Execution',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M2 complete: Job ${jobResult.status}. Synced: ${jobResult.synced_count || 0}, Errors: ${jobResult.error_count || 0}`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000013",
+      "name": "M2 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2380, 600]
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "read_bp_sync_error_log",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ table: '/SHCM/D_BP_SYNC', job_id: $json.job_id, date: new Date().toISOString().slice(0,10) }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000014",
+      "name": "Read Sync Error Log",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [2620, 480],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "read_slg1_application_log",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ object: 'HRBAS', subobject: 'BP_SYNC', external_id: $json.job_id }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000015",
+      "name": "Read SLG1 Log",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [2620, 720],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge and deduplicate errors from /SHCM/D_BP_SYNC and SLG1\n// Field names aligned with agent SyncError model: employee_id, error_class, error_message, error_source, timestamp, related_bp_id\nconst syncErrors = $('Read Sync Error Log').first().json.result || [];\nconst slg1Errors = $('Read SLG1 Log').first().json.result || [];\n\n// Normalize both error sources into agent-compatible SyncError format\nconst normalizeError = (err, source) => ({\n  employee_id: err.PERNR || err.pernr || err.employee_id || '',\n  error_class: err.MSGNO || err.error_code || err.message_number || '',\n  error_message: err.MSGTX || err.error_message || err.message_text || '',\n  error_source: source,\n  timestamp: err.DATUM || err.timestamp || err.date || new Date().toISOString(),\n  related_bp_id: err.PARTNER || err.bp_id || null\n});\n\nconst allErrors = [\n  ...(Array.isArray(syncErrors) ? syncErrors : []).map(e => normalizeError(e, 'BP_SYNC')),\n  ...(Array.isArray(slg1Errors) ? slg1Errors : []).map(e => normalizeError(e, 'SLG1'))\n];\n\n// Deduplicate by employee_id + error_class combination\nconst seen = new Set();\nconst uniqueErrors = allErrors.filter(err => {\n  const key = `${err.employee_id}_${err.error_class}_${err.error_source}`;\n  if (seen.has(key)) return false;\n  seen.add(key);\n  return true;\n});\n\nconst prevData = $('M2 Milestone Log').first().json;\n\nreturn [{\n  json: {\n    ...prevData,\n    errors: uniqueErrors,\n    error_count: uniqueErrors.length,\n    bp_sync_errors: (Array.isArray(syncErrors) ? syncErrors : []).length,\n    slg1_errors: (Array.isArray(slg1Errors) ? slg1Errors : []).length,\n    deduplicated_count: uniqueErrors.length\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000016",
+      "name": "Merge Errors",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-errors",
+              "leftValue": "={{ $json.error_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000017",
+      "name": "Has Errors?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3100, 600]
+    },
+    {
+      "parameters": {
+        "agentUrl": "={{ $env.BUPA_SYNC_AGENT_URL || 'http://bupa-sync-agent:5000' }}",
+        "message": "={{ 'Analyze these BUPA sync errors and propose fixes with confidence scores.\\n\\nContext:\\n- Run ID: ' + $json.run_id + '\\n- Total employees: ' + ($json.total_employees || 0) + '\\n- Error count: ' + $json.error_count + '\\n\\nErrors (SyncError format):\\n' + JSON.stringify($json.errors.slice(0, 50), null, 2) }}",
+        "timeout": 120000
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000018",
+      "name": "Invoke BUPA Sync Agent",
+      "type": "CUSTOM.sapAgent",
+      "typeVersion": 1,
+      "position": [3340, 520],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// M3 Milestone: Error Log Extraction and AI Analysis complete\nconst prevData = $('Merge Errors').first().json;\nconst agentResponse = $('Invoke BUPA Sync Agent').first().json;\n\nlet proposals = [];\ntry {\n  const responseText = agentResponse.result || agentResponse.text || JSON.stringify(agentResponse);\n  // Try to parse JSON from the agent response\n  const jsonMatch = responseText.match(/\\[([\\s\\S]*?)\\]/);\n  if (jsonMatch) {\n    proposals = JSON.parse('[' + jsonMatch[1] + ']');\n  }\n} catch (e) {\n  proposals = [];\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    proposals,\n    proposal_count: proposals.length,\n    milestone: 'M3',\n    milestone_name: 'Error Log Extraction',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M3 complete: ${prevData.error_count} errors found, ${proposals.length} fix proposals generated by AI agent.`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000019",
+      "name": "M3 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3580, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// M3 Milestone: No errors found - skip to report\nconst prevData = $('Merge Errors').first().json;\n\nreturn [{\n  json: {\n    ...prevData,\n    proposals: [],\n    proposal_count: 0,\n    milestone: 'M3',\n    milestone_name: 'Error Log Extraction',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: 'M3 complete: No errors found. Skipping to reconciliation report.'\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000020",
+      "name": "M3 No Errors Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3340, 760]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse agent proposals and categorize by confidence_score (aligned with agent FixProposal model)\nconst data = $input.first().json;\nconst proposals = data.proposals || [];\n\nconst categorized = {\n  high: proposals.filter(p => (p.confidence_score || 0) > 0.8),\n  medium: proposals.filter(p => (p.confidence_score || 0) >= 0.5 && (p.confidence_score || 0) <= 0.8),\n  low: proposals.filter(p => (p.confidence_score || 0) < 0.5)\n};\n\nreturn [{\n  json: {\n    ...data,\n    categorized_proposals: categorized,\n    high_confidence_count: categorized.high.length,\n    medium_confidence_count: categorized.medium.length,\n    low_confidence_count: categorized.low.length\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000021",
+      "name": "Parse Agent Proposals",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3820, 520]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.high_confidence_count }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "High Confidence"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.medium_confidence_count }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Medium Confidence"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.low_confidence_count }}",
+                    "rightValue": 0,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Low Confidence"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": true
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000022",
+      "name": "Confidence Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [4060, 520]
+    },
+    {
+      "parameters": {
+        "subject": "=BUPA Sync Fixes Require Approval - {{ $json.run_id }}",
+        "priority": "HIGH",
+        "description": "={{ $json.high_confidence_count + $json.medium_confidence_count }} fix proposals from BUPA Sync run {{ $json.run_id }} require your approval.\\n\\nHigh confidence: {{ $json.high_confidence_count }}\\nMedium confidence: {{ $json.medium_confidence_count }}\\nLow confidence (rejected): {{ $json.low_confidence_count }}\\n\\nTotal employees: {{ $json.total_employees }}\\nTotal errors: {{ $json.error_count }}",
+        "dueDate": "={{ new Date(Date.now() + 24*60*60*1000).toISOString() }}",
+        "recipients": {
+          "recipientValues": [
+            {
+              "userId": "hr-admin@company.com"
+            }
+          ]
+        },
+        "taskDefinition": {
+          "definitionName": "BUPA Sync Fix Approval"
+        }
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000023",
+      "name": "Create Approval Task",
+      "type": "CUSTOM.sapTaskCenter",
+      "typeVersion": 1,
+      "position": [4320, 520],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "oxnqrF7MFqe0XPfX",
+          "name": "SAP Task Center|sap.taskcenter"
+        }
+      },
+      "webhookId": "b7a3e4f5-6789-4abc-def0-123456789abc"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.response }}",
+                    "rightValue": "approved",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Approved"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.response }}",
+                    "rightValue": "rejected",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Rejected"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.result.response }}",
+                    "rightValue": "timeout",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Timeout"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000024",
+      "name": "Approval Response",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [4560, 520]
+    },
+    {
+      "parameters": {
+        "sendTo": "hr-admin@company.com",
+        "subject": "=BUPA Sync Fixes Approved - {{ $('Parse Agent Proposals').first().json.run_id }}",
+        "emailType": "text",
+        "message": "=The BUPA Sync fix proposals for run {{ $('Parse Agent Proposals').first().json.run_id }} have been APPROVED.\\n\\nApplying {{ $('Parse Agent Proposals').first().json.high_confidence_count + $('Parse Agent Proposals').first().json.medium_confidence_count }} fixes now."
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000025",
+      "name": "Notify Approved",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [4800, 400],
+      "credentials": {
+        "smtp": {
+          "id": "MISSING",
+          "name": "MISSING - Configure SMTP credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "hr-admin@company.com",
+        "subject": "=BUPA Sync Fixes REJECTED - {{ $('Parse Agent Proposals').first().json.run_id }}",
+        "emailType": "text",
+        "message": "=The BUPA Sync fix proposals for run {{ $('Parse Agent Proposals').first().json.run_id }} have been REJECTED.\\n\\nNo fixes will be applied. Manual intervention required."
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000026",
+      "name": "Notify Rejected",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [4800, 600],
+      "credentials": {
+        "smtp": {
+          "id": "MISSING",
+          "name": "MISSING - Configure SMTP credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "hr-admin@company.com",
+        "subject": "=BUPA Sync Approval TIMED OUT - {{ $('Parse Agent Proposals').first().json.run_id }}",
+        "emailType": "text",
+        "message": "=The approval request for BUPA Sync fixes (run {{ $('Parse Agent Proposals').first().json.run_id }}) has TIMED OUT.\\n\\nPlease review and manually approve or reject the proposed fixes."
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000027",
+      "name": "Notify Timeout",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [4800, 800],
+      "credentials": {
+        "smtp": {
+          "id": "MISSING",
+          "name": "MISSING - Configure SMTP credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// M4 Milestone: Approval workflow complete\nconst data = $('Parse Agent Proposals').first().json;\nconst approvalResult = $('Approval Response').first().json.result.response;\n\nreturn [{\n  json: {\n    ...data,\n    approval_result: approvalResult,\n    milestone: 'M4',\n    milestone_name: 'Approval Workflow',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M4 complete: Approval result = ${approvalResult}. High: ${data.high_confidence_count}, Medium: ${data.medium_confidence_count}, Low (auto-rejected): ${data.low_confidence_count}`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000028",
+      "name": "M4 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5060, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filter to only approved fixes (high + medium confidence)\nconst data = $input.first().json;\nconst approvedFixes = [\n  ...(data.categorized_proposals.high || []),\n  ...(data.categorized_proposals.medium || [])\n];\n\n// Create batch items for processing (100 per batch)\nconst BATCH_SIZE = 100;\nconst batches = [];\nfor (let i = 0; i < approvedFixes.length; i += BATCH_SIZE) {\n  batches.push(approvedFixes.slice(i, i + BATCH_SIZE));\n}\n\nreturn [{\n  json: {\n    ...data,\n    approved_fixes: approvedFixes,\n    approved_fix_count: approvedFixes.length,\n    fix_batches: batches,\n    fix_batch_count: batches.length\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000029",
+      "name": "Filter Approved Fixes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5300, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare batch items for Split In Batches node\nconst data = $input.first().json;\nconst items = data.fix_batches.map((batch, idx) => ({\n  json: {\n    batch_index: idx,\n    batch_size: batch.length,\n    fixes: batch,\n    run_id: data.run_id,\n    total_batches: data.fix_batch_count\n  }\n}));\n\nreturn items.length > 0 ? items : [{ json: { batch_index: 0, batch_size: 0, fixes: [], run_id: data.run_id, total_batches: 0 } }];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000030",
+      "name": "Prepare Fix Batches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5540, 400]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000031",
+      "name": "Loop Fix Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [5780, 400]
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "apply_fix_via_rfc",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ fixes: $json.fixes, batch_index: $json.batch_index, run_id: $json.run_id }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000032",
+      "name": "Apply Fix via RFC",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [6020, 400],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mcpServer": "sap-hcm-server",
+        "toolSelectionMode": "id",
+        "toolId": "retrigger_sync_for_records",
+        "inputMode": "json",
+        "toolArguments": "={{ JSON.stringify({ pernrs: $json.fixes.map(f => f.pernr), run_id: $json.run_id, batch_index: $json.batch_index }) }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000033",
+      "name": "Re-trigger Sync for Fixed Records",
+      "type": "CUSTOM.sapMcpClient",
+      "typeVersion": 1,
+      "position": [6260, 400],
+      "credentials": {
+        "sapClientCredentials": {
+          "id": "iwDaQwqnIuuPZwmn",
+          "name": "SAP Agent Gateway|sap.agw"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "interval": 30,
+        "unit": "seconds"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000034",
+      "name": "Wait for Retry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [6500, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// M5 Milestone: Fix Application & Retry complete\nconst data = $('Filter Approved Fixes').first().json;\n\nreturn [{\n  json: {\n    ...data,\n    milestone: 'M5',\n    milestone_name: 'Fix Application & Retry',\n    milestone_status: 'COMPLETED',\n    milestone_timestamp: new Date().toISOString(),\n    message: `M5 complete: ${data.approved_fix_count} fixes applied across ${data.fix_batch_count} batches. Re-sync triggered for affected records.`\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000035",
+      "name": "M5 Milestone Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [6740, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Reconciliation Report\nconst data = $input.first().json;\n\nconst total = data.total_employees || 0;\nconst synced = (data.total_employees || 0) - (data.error_count || 0);\nconst failed = data.error_count || 0;\nconst fixed = data.approved_fix_count || 0;\nconst remainingErrors = Math.max(0, failed - fixed);\nconst coveragePct = total > 0 ? ((synced + fixed) / total * 100).toFixed(1) : '0.0';\n\nconst report = {\n  report_title: 'BUPA Sync Reconciliation Report',\n  run_id: data.run_id || 'N/A',\n  generated_at: new Date().toISOString(),\n  summary: {\n    total_employees: total,\n    successfully_synced: synced,\n    initial_errors: failed,\n    fixes_applied: fixed,\n    remaining_errors: remainingErrors,\n    coverage_percentage: parseFloat(coveragePct)\n  },\n  milestones: [\n    { id: 'M1', name: 'Population Selection', status: 'COMPLETED' },\n    { id: 'M2', name: 'BUPA Sync Execution', status: 'COMPLETED' },\n    { id: 'M3', name: 'Error Log Extraction', status: 'COMPLETED' },\n    { id: 'M4', name: 'Approval Workflow', status: data.approval_result ? 'COMPLETED' : 'SKIPPED' },\n    { id: 'M5', name: 'Fix Application & Retry', status: fixed > 0 ? 'COMPLETED' : 'SKIPPED' }\n  ],\n  details: {\n    sync_scope: data.sync_scope || 'all_active',\n    batch_count: data.batch_count || 0,\n    high_confidence_fixes: data.high_confidence_count || 0,\n    medium_confidence_fixes: data.medium_confidence_count || 0,\n    low_confidence_rejected: data.low_confidence_count || 0,\n    approval_result: data.approval_result || 'N/A'\n  }\n};\n\nconst emailBody = `BUPA Sync Reconciliation Report\\n` +\n  `================================\\n` +\n  `Run ID: ${report.run_id}\\n` +\n  `Generated: ${report.generated_at}\\n\\n` +\n  `SUMMARY\\n` +\n  `-------\\n` +\n  `Total Employees: ${report.summary.total_employees}\\n` +\n  `Successfully Synced: ${report.summary.successfully_synced}\\n` +\n  `Initial Errors: ${report.summary.initial_errors}\\n` +\n  `Fixes Applied: ${report.summary.fixes_applied}\\n` +\n  `Remaining Errors: ${report.summary.remaining_errors}\\n` +\n  `Coverage: ${report.summary.coverage_percentage}%\\n\\n` +\n  `MILESTONES\\n` +\n  `----------\\n` +\n  report.milestones.map(m => `${m.id} - ${m.name}: ${m.status}`).join('\\n') + '\\n\\n' +\n  `DETAILS\\n` +\n  `-------\\n` +\n  `Scope: ${report.details.sync_scope}\\n` +\n  `Batches: ${report.details.batch_count}\\n` +\n  `High Confidence Fixes: ${report.details.high_confidence_fixes}\\n` +\n  `Medium Confidence Fixes: ${report.details.medium_confidence_fixes}\\n` +\n  `Low Confidence (Rejected): ${report.details.low_confidence_rejected}\\n` +\n  `Approval Decision: ${report.details.approval_result}`;\n\nreturn [{\n  json: {\n    report,\n    email_body: emailBody\n  }\n}];"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000036",
+      "name": "Generate Reconciliation Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [7000, 600]
+    },
+    {
+      "parameters": {
+        "sendTo": "consultant@company.com, hr-admin@company.com",
+        "subject": "=BUPA Sync Reconciliation Report - {{ $json.report.run_id }}",
+        "emailType": "text",
+        "message": "={{ $json.email_body }}"
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000037",
+      "name": "Send Reconciliation Report",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [7260, 600],
+      "credentials": {
+        "smtp": {
+          "id": "MISSING",
+          "name": "MISSING - Configure SMTP credential"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "a1b2c3d4-0001-4000-8000-000000000038",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 1200]
+    },
+    {
+      "parameters": {
+        "sendTo": "consultant@company.com, hr-admin@company.com",
+        "subject": "=BUPA Sync Workflow ERROR - {{ $json.workflow.name }}",
+        "emailType": "text",
+        "message": "=CRITICAL ERROR in BUPA Sync Workflow\\n\\nWorkflow: {{ $json.workflow.name }}\\nExecution ID: {{ $json.execution.id }}\\nError Time: {{ new Date().toISOString() }}\\n\\nError Node: {{ $json.execution.lastNodeExecuted }}\\nError Message: {{ $json.execution.error.message }}\\n\\nPlease investigate immediately."
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000039",
+      "name": "Send Error Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [260, 1200],
+      "credentials": {
+        "smtp": {
+          "id": "MISSING",
+          "name": "MISSING - Configure SMTP credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Step 1: Population Selection (M1)\nRead active employees from PA0000 and vendor employees from LFB1.\nMerge, deduplicate, and chunk into batches of 500.",
+        "height": 300,
+        "width": 860
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000101",
+      "name": "Note: Population Selection",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [400, 340]
+    },
+    {
+      "parameters": {
+        "content": "## Step 2: BUPA Sync Execution (M2)\nSchedule background sync job, poll for completion at 60s intervals.\nRoute based on job status: completed/failed/running.",
+        "height": 300,
+        "width": 1000
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000102",
+      "name": "Note: BUPA Sync Execution",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1380, 340]
+    },
+    {
+      "parameters": {
+        "content": "## Step 3: Error Log Extraction (M3)\nRead /SHCM/D_BP_SYNC and SLG1 logs.\nMerge/deduplicate errors, invoke AI agent for analysis.",
+        "height": 300,
+        "width": 1100
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000103",
+      "name": "Note: Error Extraction",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2540, 340]
+    },
+    {
+      "parameters": {
+        "content": "## Step 4: Approval Workflow (M4)\nParse proposals, route by confidence level.\nCreate Task Center approval, handle approved/rejected/timeout.",
+        "height": 500,
+        "width": 1500
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000104",
+      "name": "Note: Approval Workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [3740, 260]
+    },
+    {
+      "parameters": {
+        "content": "## Step 5: Fix Application & Retry (M5)\nApply approved fixes in batches of 100 via RFC.\nRe-trigger sync for fixed records.",
+        "height": 300,
+        "width": 1560
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000105",
+      "name": "Note: Fix Application",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [5220, 260]
+    },
+    {
+      "parameters": {
+        "content": "## Reconciliation Report\nGenerate structured report and email to consultant + HR admin.",
+        "height": 200,
+        "width": 560
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000106",
+      "name": "Note: Reconciliation",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [6920, 460]
+    },
+    {
+      "parameters": {
+        "content": "## Error Handling\nGlobal error trigger catches any unhandled failures.\nSends alert email to consultant and HR admin.",
+        "height": 200,
+        "width": 500
+      },
+      "id": "a1b2c3d4-0001-4000-8000-000000000107",
+      "name": "Note: Error Handling",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-80, 1080]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Set Parameters", "type": "main", "index": 0 }]
+      ]
+    },
+    "Set Parameters": {
+      "main": [
+        [
+          { "node": "Read Active Employees", "type": "main", "index": 0 },
+          { "node": "Read Employee Vendors", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Read Active Employees": {
+      "main": [
+        [{ "node": "Merge and Chunk", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Employee Vendors": {
+      "main": [
+        [{ "node": "Merge and Chunk", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge and Chunk": {
+      "main": [
+        [{ "node": "Is Dry Run?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Is Dry Run?": {
+      "main": [
+        [{ "node": "M1 Dry Run Log", "type": "main", "index": 0 }],
+        [{ "node": "M1 Milestone Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "M1 Dry Run Log": {
+      "main": [
+        [{ "node": "Generate Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "M1 Milestone Log": {
+      "main": [
+        [{ "node": "Schedule BUPA Sync Job", "type": "main", "index": 0 }]
+      ]
+    },
+    "Schedule BUPA Sync Job": {
+      "main": [
+        [{ "node": "Wait for Sync", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait for Sync": {
+      "main": [
+        [{ "node": "Check Job Status", "type": "main", "index": 0 }]
+      ]
+    },
+    "Check Job Status": {
+      "main": [
+        [{ "node": "Job Status Router", "type": "main", "index": 0 }]
+      ]
+    },
+    "Job Status Router": {
+      "main": [
+        [{ "node": "M2 Milestone Log", "type": "main", "index": 0 }],
+        [{ "node": "M2 Milestone Log", "type": "main", "index": 0 }],
+        [{ "node": "Wait for Sync", "type": "main", "index": 0 }]
+      ]
+    },
+    "M2 Milestone Log": {
+      "main": [
+        [
+          { "node": "Read Sync Error Log", "type": "main", "index": 0 },
+          { "node": "Read SLG1 Log", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Read Sync Error Log": {
+      "main": [
+        [{ "node": "Merge Errors", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read SLG1 Log": {
+      "main": [
+        [{ "node": "Merge Errors", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Errors": {
+      "main": [
+        [{ "node": "Has Errors?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Errors?": {
+      "main": [
+        [{ "node": "Invoke BUPA Sync Agent", "type": "main", "index": 0 }],
+        [{ "node": "M3 No Errors Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Invoke BUPA Sync Agent": {
+      "main": [
+        [{ "node": "M3 Milestone Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "M3 Milestone Log": {
+      "main": [
+        [{ "node": "Parse Agent Proposals", "type": "main", "index": 0 }]
+      ]
+    },
+    "M3 No Errors Log": {
+      "main": [
+        [{ "node": "Generate Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Agent Proposals": {
+      "main": [
+        [{ "node": "Confidence Router", "type": "main", "index": 0 }]
+      ]
+    },
+    "Confidence Router": {
+      "main": [
+        [{ "node": "Create Approval Task", "type": "main", "index": 0 }],
+        [{ "node": "Create Approval Task", "type": "main", "index": 0 }],
+        [{ "node": "Create Approval Task", "type": "main", "index": 0 }]
+      ]
+    },
+    "Create Approval Task": {
+      "main": [
+        [{ "node": "Approval Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Approval Response": {
+      "main": [
+        [{ "node": "Notify Approved", "type": "main", "index": 0 }],
+        [{ "node": "Notify Rejected", "type": "main", "index": 0 }],
+        [{ "node": "Notify Timeout", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Approved": {
+      "main": [
+        [{ "node": "M4 Milestone Log", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Rejected": {
+      "main": [
+        [{ "node": "Generate Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Notify Timeout": {
+      "main": [
+        [{ "node": "Generate Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "M4 Milestone Log": {
+      "main": [
+        [{ "node": "Filter Approved Fixes", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Approved Fixes": {
+      "main": [
+        [{ "node": "Prepare Fix Batches", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Fix Batches": {
+      "main": [
+        [{ "node": "Loop Fix Batches", "type": "main", "index": 0 }]
+      ]
+    },
+    "Loop Fix Batches": {
+      "main": [
+        [{ "node": "M5 Milestone Log", "type": "main", "index": 0 }],
+        [{ "node": "Apply Fix via RFC", "type": "main", "index": 0 }]
+      ]
+    },
+    "Apply Fix via RFC": {
+      "main": [
+        [{ "node": "Re-trigger Sync for Fixed Records", "type": "main", "index": 0 }]
+      ]
+    },
+    "Re-trigger Sync for Fixed Records": {
+      "main": [
+        [{ "node": "Wait for Retry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait for Retry": {
+      "main": [
+        [{ "node": "Loop Fix Batches", "type": "main", "index": 0 }]
+      ]
+    },
+    "M5 Milestone Log": {
+      "main": [
+        [{ "node": "Generate Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Reconciliation Report": {
+      "main": [
+        [{ "node": "Send Reconciliation Report", "type": "main", "index": 0 }]
+      ]
+    },
+    "Error Trigger": {
+      "main": [
+        [{ "node": "Send Error Alert", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
