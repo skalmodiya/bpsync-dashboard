@@ -73,7 +73,30 @@ Additional Services:
 The fastest way to get everything running:
 
 ```bash
+# Foreground (see logs in terminal)
 docker-compose up --build
+
+# Background (detached mode)
+docker-compose up --build -d
+```
+
+**Useful commands:**
+
+```bash
+# View logs (all services, follow output)
+docker-compose logs -f
+
+# View logs for a specific service
+docker-compose logs n8n-import
+
+# Check service status
+docker-compose ps
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (full reset)
+docker-compose down -v
 ```
 
 Once all services are healthy:
