@@ -70,6 +70,18 @@ Additional Services:
 
 ### Docker (Recommended)
 
+Clone the repository:
+
+```bash
+# GitHub.com
+git clone https://github.com/skalmodiya/bupa-sync-automation.git
+cd bupa-sync-automation
+
+# SAP GitHub (internal)
+git clone https://github.tools.sap/I560043/bupa-sync-automation.git
+cd bupa-sync-automation
+```
+
 The fastest way to get everything running:
 
 ```bash
