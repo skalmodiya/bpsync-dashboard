@@ -93,7 +93,12 @@ export function SettingsPage() {
   }, [activeTab, loading]);
 
   const handleSave = async () => {
-    await saveSettings(settings);
+    const success = await saveSettings(settings);
+    if (success) {
+      showToast('success', 'Settings saved successfully');
+    } else {
+      showToast('error', 'Failed to save settings');
+    }
   };
 
   const handleTest = async (type: 'llm' | 'n8n' | 's4hana' | 'email') => {
@@ -266,33 +271,34 @@ export function SettingsPage() {
             <div className="space-y-3">
               <div className="flex gap-3">
                 {(['light', 'dark', 'system'] as const).map((mode) => (
-                  <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="theme-mode"
-                      value={mode}
-                      checked={
-                        mode === 'system' ? !localStorage.getItem('theme') :
-                        mode === 'dark' ? localStorage.getItem('theme') === 'dark' :
-                        localStorage.getItem('theme') === 'light'
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      if (mode === 'system') {
+                        localStorage.removeItem('theme');
+                        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                        document.documentElement.classList.toggle('dark', prefersDark);
+                      } else if (mode === 'dark') {
+                        localStorage.setItem('theme', 'dark');
+                        document.documentElement.classList.add('dark');
+                      } else {
+                        localStorage.setItem('theme', 'light');
+                        document.documentElement.classList.remove('dark');
                       }
-                      onChange={() => {
-                        if (mode === 'system') {
-                          localStorage.removeItem('theme');
-                          const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                          document.documentElement.classList.toggle('dark', prefersDark);
-                        } else if (mode === 'dark') {
-                          localStorage.setItem('theme', 'dark');
-                          document.documentElement.classList.add('dark');
-                        } else {
-                          localStorage.setItem('theme', 'light');
-                          document.documentElement.classList.remove('dark');
-                        }
-                      }}
-                      className="h-4 w-4 text-primary"
-                    />
-                    <span className="text-sm capitalize">{mode}</span>
-                  </label>
+                      // Force re-render
+                      setSettings((s) => ({ ...s }));
+                    }}
+                    className={`px-4 py-2 rounded-md border text-sm capitalize transition-colors ${
+                      (mode === 'system' && !localStorage.getItem('theme')) ||
+                      (mode === 'dark' && localStorage.getItem('theme') === 'dark') ||
+                      (mode === 'light' && localStorage.getItem('theme') === 'light')
+                        ? 'border-primary bg-primary/10 text-primary font-medium'
+                        : 'border-border hover:bg-muted'
+                    }`}
+                  >
+                    {mode}
+                  </button>
                 ))}
               </div>
             </div>
