@@ -15,6 +15,25 @@ from auth import decode_token
 router = APIRouter()
 
 
+def _get_request_origin(request: Request) -> str:
+    """Derive the origin (scheme + host) from the incoming request."""
+    # Use X-Forwarded headers if behind a proxy, otherwise use the Host header
+    forwarded_proto = request.headers.get("x-forwarded-proto", "http")
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get(
+        "host", "localhost:3001"
+    )
+    # The request arrives at the backend on port 8080, but the user accesses
+    # via the dashboard nginx on port 3001 (or 80 inside Docker).
+    # The Host header from nginx proxy contains the original host the user used.
+    return f"{forwarded_proto}://{forwarded_host}"
+
+
+def _build_redirect_uri(request: Request, settings) -> str:
+    """Build the OIDC redirect URI dynamically from the request origin."""
+    origin = _get_request_origin(request)
+    return f"{origin}/api/auth/callback"
+
+
 @router.get("/login")
 async def login(request: Request):
     """Redirect to IAS authorization endpoint."""
@@ -26,12 +45,12 @@ async def login(request: Request):
         )
 
     state = secrets.token_urlsafe(32)
-    # Store state in a cookie for CSRF protection
+    # Dynamically build redirect_uri from the request origin so it works from any host
+    redirect_uri = _build_redirect_uri(request, settings)
     params = {
         "response_type": "code",
         "client_id": settings.auth.client_id,
-        "redirect_uri": settings.auth.redirect_uri
-        or "http://localhost:3001/auth/callback",
+        "redirect_uri": redirect_uri,
         "scope": "openid email profile",
         "state": state,
     }
@@ -41,6 +60,10 @@ async def login(request: Request):
     response = RedirectResponse(url=auth_url)
     response.set_cookie(
         "oauth_state", state, httponly=True, max_age=600, samesite="lax"
+    )
+    # Store the redirect_uri used so the callback can use the same one for token exchange
+    response.set_cookie(
+        "oauth_redirect_uri", redirect_uri, httponly=True, max_age=600, samesite="lax"
     )
     return response
 
@@ -53,6 +76,11 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
 
     settings = load_settings()
 
+    # Use the same redirect_uri that was sent in the login request
+    redirect_uri = request.cookies.get("oauth_redirect_uri") or _build_redirect_uri(
+        request, settings
+    )
+
     # Exchange code for token
     token_url = f"{settings.auth.ias_url}/oauth2/token"
     async with httpx.AsyncClient() as client:
@@ -61,8 +89,7 @@ async def callback(request: Request, code: str = "", state: str = "", error: str
             data={
                 "grant_type": "authorization_code",
                 "code": code,
-                "redirect_uri": settings.auth.redirect_uri
-                or "http://localhost:3001/auth/callback",
+                "redirect_uri": redirect_uri,
                 "client_id": settings.auth.client_id,
                 "client_secret": settings.auth.client_secret,
             },
@@ -118,13 +145,13 @@ async def logout(request: Request):
     if session_id:
         delete_session(session_id)
 
-    # Build IAS logout URL
+    # Build IAS logout URL using the request origin
     ias_logout_url = ""
     if settings.auth.ias_url:
-        post_logout_redirect = "http://localhost:3001"
+        origin = _get_request_origin(request)
         params = urllib.parse.urlencode(
             {
-                "post_logout_redirect_uri": post_logout_redirect,
+                "post_logout_redirect_uri": origin,
                 "client_id": settings.auth.client_id,
             }
         )
@@ -137,6 +164,7 @@ async def logout(request: Request):
         }
     )
     response.delete_cookie("session_id")
+    response.delete_cookie("oauth_redirect_uri")
     return response
 
 
