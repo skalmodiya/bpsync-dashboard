@@ -91,6 +91,9 @@ docker-compose up --build
 
 # Background (detached mode)
 docker-compose up --build -d
+
+# With ngrok (expose n8n webhooks to internet)
+docker-compose --profile ngrok up --build -d
 ```
 
 **Useful commands:**
@@ -120,9 +123,12 @@ Once all services are healthy:
 | Backend API   | http://localhost:8081         | —                                    |
 | n8n Editor    | http://localhost:5678         | Create account on first login; workflows are pre-loaded |
 | PostgreSQL    | localhost:5432               | User: bpsync / Pass: bpsync          |
+| pgAdmin       | http://localhost:5050         | Auto-connected to both DBs           |
+| Qdrant        | http://localhost:6333         | Vector DB dashboard                  |
 | Mock S/4HANA  | http://localhost:8090         | —                                    |
 | Mailpit UI    | http://localhost:8025         | —                                    |
 | AI Agent      | http://localhost:5000         | —                                    |
+| ngrok UI      | http://localhost:4040         | Only with `--profile ngrok`          |
 
 ### Native (Development)
 
@@ -173,8 +179,32 @@ All configuration is managed through the **Settings** page in the dashboard (`/s
 | SMTP                  | Mail server host, port, sender address         |
 | Mock S/4HANA          | Base URL for the SAP mock service              |
 | Sync Intervals        | Cron expressions for background jobs           |
+| ngrok                 | Auth token, domain for webhook tunneling       |
+| Qdrant                | Vector DB URL for RAG/embeddings               |
 
-Settings are persisted in `backend/data/settings.json` and can be modified at runtime without restart.
+Settings are persisted in the database and can be modified at runtime without restart.
+
+### ngrok (Optional Webhook Tunneling)
+
+ngrok exposes your local n8n webhooks to the internet, useful for receiving external callbacks.
+
+**Setup:**
+
+1. Start with the ngrok profile:
+   ```bash
+   docker-compose --profile ngrok up --build -d
+   ```
+
+2. Configure in Dashboard > Settings > ngrok:
+   - **Auth Token**: Your ngrok authentication token
+   - **Domain**: Your static ngrok domain (e.g. `my-app.ngrok-free.app`)
+
+3. Set the **n8n Webhook URL** (in Settings > n8n) to your ngrok domain:
+   ```
+   https://my-app.ngrok-free.app
+   ```
+
+4. The ngrok inspection UI is available at http://localhost:4040
 
 ---
 

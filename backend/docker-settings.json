@@ -35,5 +35,13 @@
   },
   "jobs": {
     "threshold": 5
+  },
+  "ngrok": {
+    "enabled": false,
+    "authtoken": "",
+    "domain": ""
+  },
+  "qdrant": {
+    "url": "http://qdrant:6333"
   }
 }

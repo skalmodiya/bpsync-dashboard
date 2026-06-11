@@ -58,6 +58,16 @@ class JobConfig(BaseModel):
     threshold: int = 5  # Records above this run as background job
 
 
+class NgrokConfig(BaseModel):
+    enabled: bool = False  # Whether ngrok tunnel is active
+    authtoken: str = ""  # ngrok authentication token
+    domain: str = ""  # ngrok static domain (e.g. my-app.ngrok-free.app)
+
+
+class QdrantConfig(BaseModel):
+    url: str = "http://localhost:6333"  # Qdrant vector DB endpoint
+
+
 class Settings(BaseModel):
     deployment_mode: str = "local"  # "local", "docker", "production"
     llm: LLMConfig = LLMConfig()
@@ -67,6 +77,8 @@ class Settings(BaseModel):
     agent: AgentConfig = AgentConfig()
     auth: AuthConfig = AuthConfig()
     jobs: JobConfig = JobConfig()
+    ngrok: NgrokConfig = NgrokConfig()
+    qdrant: QdrantConfig = QdrantConfig()
 
 
 def load_settings() -> Settings:
@@ -158,4 +170,6 @@ def mask_settings(settings: Settings) -> dict:
         data["smtp"]["password"] = mask_api_key(data["smtp"]["password"])
     if data["auth"]["client_secret"]:
         data["auth"]["client_secret"] = mask_api_key(data["auth"]["client_secret"])
+    if data["ngrok"]["authtoken"]:
+        data["ngrok"]["authtoken"] = mask_api_key(data["ngrok"]["authtoken"])
     return data
