@@ -21,6 +21,11 @@ const defaultSettings: Settings = {
   mockS4hana: {
     serverUrl: 'http://localhost:8090',
   },
+  s4Source: {
+    source: 'mock',
+    destinationName: 'S4_SIA_I577956',
+    sapClient: '500',
+  },
   deployment: {
     mode: 'local',
   },
@@ -29,19 +34,20 @@ const defaultSettings: Settings = {
     smtpPort: 1025,
     username: '',
     password: '',
-  },
-  auth: {
-    iasUrl: '',
-    clientId: '',
-    clientSecret: '',
+    fromEmail: '',
+    notificationEmails: [],
   },
 };
 
-/** Map backend snake_case response to frontend camelCase Settings */
 function fromBackend(data: any): Settings {
+  const deploymentMode = data?.deployment_mode || data?.deployment?.mode || 'local';
+  const rawProvider = data?.llm?.provider || defaultSettings.llm.provider;
+  const provider: Settings['llm']['provider'] =
+    rawProvider === 'sap_ai_core' ? 'sap-ai-core' : 'local-proxy';
+
   return {
     llm: {
-      provider: data?.llm?.provider || defaultSettings.llm.provider,
+      provider,
       baseUrl: data?.llm?.base_url || data?.llm?.baseUrl || defaultSettings.llm.baseUrl,
       model: data?.llm?.model || defaultSettings.llm.model,
       apiKey: data?.llm?.api_key || data?.llm?.apiKey || '',
@@ -58,29 +64,29 @@ function fromBackend(data: any): Settings {
     mockS4hana: {
       serverUrl: data?.mock_s4?.url || data?.mockS4hana?.serverUrl || defaultSettings.mockS4hana.serverUrl,
     },
-    deployment: {
-      mode: data?.deployment_mode || data?.deployment?.mode || 'local',
+    s4Source: {
+      source: data?.s4_source?.source || data?.s4Source?.source || 'mock',
+      destinationName: data?.s4_source?.destination_name || data?.s4Source?.destinationName || 'S4_SIA_I577956',
+      sapClient: data?.s4_source?.sap_client || data?.s4Source?.sapClient || '500',
     },
+    deployment: { mode: deploymentMode },
     email: {
       smtpHost: data?.smtp?.host || data?.email?.smtpHost || '',
       smtpPort: data?.smtp?.port || data?.email?.smtpPort || 1025,
       username: data?.smtp?.username || data?.email?.username || '',
       password: data?.smtp?.password || data?.email?.password || '',
-    },
-    auth: {
-      iasUrl: data?.auth?.ias_url || data?.auth?.iasUrl || '',
-      clientId: data?.auth?.client_id || data?.auth?.clientId || '',
-      clientSecret: data?.auth?.client_secret || data?.auth?.clientSecret || '',
+      fromEmail: data?.smtp?.from_email || data?.email?.fromEmail || '',
+      notificationEmails: data?.smtp?.notification_emails || data?.email?.notificationEmails || [],
     },
   };
 }
 
-/** Map frontend camelCase Settings to backend snake_case for PUT */
 function toBackend(settings: Settings): any {
+  const provider = settings.llm.provider === 'sap-ai-core' ? 'sap_ai_core' : 'local_proxy';
   return {
     deployment_mode: settings.deployment.mode,
     llm: {
-      provider: settings.llm.provider,
+      provider,
       base_url: settings.llm.baseUrl,
       model: settings.llm.model,
       api_key: settings.llm.apiKey,
@@ -94,23 +100,21 @@ function toBackend(settings: Settings): any {
       monitored_workflow_ids: settings.n8n.monitoredWorkflowIds,
       webhook_url: settings.n8n.webhookUrl,
     },
-    mock_s4: {
-      url: settings.mockS4hana.serverUrl,
+    mock_s4: { url: settings.mockS4hana.serverUrl },
+    s4_source: {
+      source: settings.s4Source.source,
+      destination_name: settings.s4Source.destinationName,
+      sap_client: settings.s4Source.sapClient,
     },
     smtp: {
       host: settings.email.smtpHost,
       port: settings.email.smtpPort,
       username: settings.email.username,
       password: settings.email.password,
+      from_email: settings.email.fromEmail,
+      notification_emails: settings.email.notificationEmails,
     },
-    agent: {
-      url: 'http://localhost:5000',
-    },
-    auth: {
-      ias_url: settings.auth.iasUrl,
-      client_id: settings.auth.clientId,
-      client_secret: settings.auth.clientSecret,
-    },
+    agent: { url: 'http://localhost:5000' },
   };
 }
 
@@ -135,6 +139,19 @@ export function useSettings() {
   const saveSettings = useCallback(async (newSettings: Settings) => {
     setSaving(true);
     setError(null);
+
+    const secrets: Record<string, string> = {};
+    if (newSettings.n8n.apiKey && !newSettings.n8n.apiKey.startsWith('*'))
+      secrets['n8n_api_key'] = newSettings.n8n.apiKey;
+    if (newSettings.llm.apiKey && !newSettings.llm.apiKey.startsWith('*'))
+      secrets['llm_api_key'] = newSettings.llm.apiKey;
+    if (newSettings.email.password && !newSettings.email.password.startsWith('*'))
+      secrets['smtp_password'] = newSettings.email.password;
+
+    if (Object.keys(secrets).length > 0) {
+      await api.put<any>('/api/settings/secrets', secrets);
+    }
+
     const res = await api.put<any>('/api/settings', toBackend(newSettings));
     if (res.ok) {
       setSettings(newSettings);
@@ -145,40 +162,50 @@ export function useSettings() {
     return res.ok;
   }, []);
 
-  const testConnection = useCallback(async (type: 'llm' | 'n8n' | 's4hana' | 'email') => {
-    const endpoint = type === 's4hana' ? 'test-s4' : type === 'llm' ? 'test-llm' : type === 'n8n' ? 'test-n8n' : 'test-smtp';
-    const res = await api.post<{ success: boolean; message: string }>(
-      `/api/settings/${endpoint}`,
-      toBackend(settings)
-    );
-    return res;
-  }, [settings]);
+  const testConnection = useCallback(
+    async (type: 'llm' | 'n8n' | 's4hana' | 'email') => {
+      const endpoint =
+        type === 's4hana' ? 'test-s4' :
+        type === 'llm' ? 'test-llm' :
+        type === 'n8n' ? 'test-n8n' : 'test-smtp';
+      return api.post<{ success: boolean; message: string }>(
+        `/api/settings/${endpoint}`,
+        toBackend(settings)
+      );
+    },
+    [settings]
+  );
 
   const sendTestEmail = useCallback(async () => {
-    const res = await api.post<{ status: string; message: string }>(
+    return api.post<{ status: string; message: string }>(
       '/api/settings/send-test-email',
       toBackend(settings)
     );
-    return res;
   }, [settings]);
 
   const fetchN8nWorkflows = useCallback(async (overrideSettings?: Settings) => {
     const s = overrideSettings || settings;
-    const res = await api.post<{ workflows?: Array<{ id: string; name: string; active: boolean }>; error?: string }>(
+    return api.post<{ workflows?: Array<{ id: string; name: string; active: boolean }>; error?: string }>(
       '/api/settings/fetch-n8n-workflows',
       toBackend(s)
     );
-    return res;
   }, [settings]);
 
   const fetchLlmModels = useCallback(async (overrideSettings?: Settings) => {
     const s = overrideSettings || settings;
-    const res = await api.post<{ models?: Array<{ id: string; name: string }>; error?: string }>(
+    return api.post<{ models?: Array<{ id: string; name: string }>; error?: string }>(
       '/api/settings/fetch-llm-models',
       toBackend(s)
     );
-    return res;
   }, [settings]);
+
+  const fetchAiCoreDeployments = useCallback(async () => {
+    return api.post<{
+      deployments?: Array<{ id: string; name: string; model_name: string; status: string; deployment_url: string }>;
+      destination?: string;
+      error?: string;
+    }>('/api/settings/fetch-aicore-deployments', {});
+  }, []);
 
   useEffect(() => {
     loadSettings();
@@ -195,6 +222,7 @@ export function useSettings() {
     sendTestEmail,
     fetchN8nWorkflows,
     fetchLlmModels,
+    fetchAiCoreDeployments,
     loadSettings,
   };
 }

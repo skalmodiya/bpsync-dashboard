@@ -342,7 +342,7 @@
     },
     {
       "parameters": {
-        "agentUrl": "={{ $env.BUPA_SYNC_AGENT_URL || 'http://bupa-sync-agent:5000' }}",
+        "agentUrl": "https://bupa-sync-agent.cfapps.us10.hana.ondemand.com",
         "message": "={{ 'Analyze these BUPA sync errors and propose fixes with confidence scores.\\n\\nContext:\\n- Run ID: ' + $json.run_id + '\\n- Total employees: ' + ($json.total_employees || 0) + '\\n- Error count: ' + $json.error_count + '\\n\\nErrors (SyncError format):\\n' + JSON.stringify($json.errors.slice(0, 50), null, 2) }}",
         "timeout": 120000
       },

@@ -1,0 +1,24 @@
+apiVersion: asset.sap/v1
+kind: Asset
+metadata:
+  name: dashboard
+  version: "1.0.0"
+type: base-ui
+container:
+  buildPath: ../../dashboard
+  port: 8080
+  buildCommand: "npm run build"
+  serveDir: "dist"
+probes:
+  liveness:
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3

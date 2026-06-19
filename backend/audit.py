@@ -40,10 +40,10 @@ def clear_events() -> int:
     from database import get_connection
 
     with get_connection() as conn:
-        cursor = conn.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE NOT (action = 'system.app_reset' AND category = 'system')"
+        row = conn.fetchone(
+            "SELECT COUNT(*) as cnt FROM audit_log WHERE NOT (action = 'system.app_reset' AND category = 'system')"
         )
-        count = cursor.fetchone()[0]
+        count = row["cnt"] if row else 0
         conn.execute(
             "DELETE FROM audit_log WHERE NOT (action = 'system.app_reset' AND category = 'system')"
         )

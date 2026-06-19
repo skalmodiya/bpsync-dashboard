@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useEffect, useState } from 'react';
 import { useAgent } from '../hooks/useAgent';
 import { Card } from '../components/Card';
@@ -36,18 +37,17 @@ export function AgentPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Agent Status</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Monitor agent health and test invocations
-          </p>
-        </div>
-        <Button variant="outline" onClick={checkHealth} loading={loading}>
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
+      <PageHeader
+        title="Agent Status"
+        subtitle="Monitor agent health and test invocations"
+        action={
+          <button onClick={checkHealth} disabled={loading}
+            className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        }
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Health Status */}

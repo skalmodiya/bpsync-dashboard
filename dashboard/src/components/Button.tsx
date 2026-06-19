@@ -10,20 +10,29 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants = {
   primary:
-    'bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm',
+    'bg-gradient-to-r from-primary to-primary/80 text-primary-foreground ' +
+    'hover:from-primary/95 hover:to-primary/75 ' +
+    'shadow-md shadow-primary/25 hover:shadow-lg hover:shadow-primary/30 ' +
+    'hover:-translate-y-px active:translate-y-0',
   secondary:
-    'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+    'bg-secondary text-secondary-foreground hover:bg-secondary/75 ' +
+    'shadow-sm hover:shadow-md transition-shadow',
   destructive:
-    'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+    'bg-gradient-to-r from-destructive to-destructive/85 text-destructive-foreground ' +
+    'hover:from-destructive/90 hover:to-destructive/75 ' +
+    'shadow-md shadow-destructive/20 hover:shadow-lg hover:shadow-destructive/25 ' +
+    'hover:-translate-y-px active:translate-y-0',
   outline:
-    'border border-border bg-background hover:bg-accent hover:text-accent-foreground',
-  ghost: 'hover:bg-accent hover:text-accent-foreground',
+    'border border-border/70 bg-background/90 text-foreground ' +
+    'hover:bg-muted/60 hover:border-border hover:shadow-sm',
+  ghost:
+    'text-foreground hover:bg-muted/70 hover:text-foreground',
 };
 
 const sizes = {
-  sm: 'h-8 px-3 text-xs',
-  md: 'h-9 px-4 text-sm',
-  lg: 'h-10 px-6 text-sm',
+  sm: 'h-8 px-3 text-xs gap-1.5',
+  md: 'h-9 px-4 text-sm gap-2',
+  lg: 'h-10 px-5 text-sm gap-2',
 };
 
 export function Button({
@@ -38,8 +47,9 @@ export function Button({
   return (
     <button
       className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-md font-medium transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        'inline-flex items-center justify-center rounded-lg font-medium',
+        'transition-all duration-200',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
         'disabled:pointer-events-none disabled:opacity-50',
         variants[variant],
         sizes[size],
@@ -50,7 +60,7 @@ export function Button({
     >
       {loading && (
         <svg
-          className="h-4 w-4 animate-spin"
+          className="h-3.5 w-3.5 animate-spin flex-shrink-0"
           xmlns="http://www.w3.org/2000/svg"
           fill="none"
           viewBox="0 0 24 24"

@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useState } from 'react';
 import { Card } from '../components/Card';
 import { ArrowRight, ArrowDown, CheckCircle, XCircle, Bot, Workflow, User, Database, Mail, ChevronDown, ChevronRight, ChevronsUpDown } from 'lucide-react';
@@ -125,7 +126,7 @@ export function ProcessPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold">Process Flow</h1>
+        <PageHeader title="Process Flow" subtitle="End-to-end BUPA sync process visualization" />
         <p className="text-sm text-muted-foreground mt-1">
           End-to-end BUPA Sync Automation process — how each component interacts
         </p>

@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useEffect, useState } from 'react';
 import { useN8n } from '../hooks/useN8n';
 import { useSettings } from '../hooks/useSettings';
@@ -140,35 +141,31 @@ export function WorkflowsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Workflow Monitor</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Monitor n8n workflow executions and trigger sync operations
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => fetchExecutions()}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
-          <Button onClick={handleTriggerSync} loading={triggering}>
-            <Play className="h-4 w-4" />
-            Trigger Sync
-          </Button>
-          <a
-            href={settings.n8n.workflowId
-              ? `http://localhost:5678/workflow/${settings.n8n.workflowId}`
-              : 'http://localhost:5678'}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Open in n8n
-          </a>
-        </div>
-      </div>
+      <PageHeader
+        title="Workflow Monitor"
+        subtitle="Monitor n8n workflow executions and trigger syncs"
+        action={
+          <div className="flex items-center gap-2">
+            <button onClick={() => fetchExecutions()}
+              className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </button>
+            <button onClick={handleTriggerSync} disabled={triggering}
+              className="flex items-center gap-1.5 text-xs text-white bg-white/25 hover:bg-white/35 px-3 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50">
+              {triggering ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Trigger Sync
+            </button>
+            <a
+              href={settings.n8n.url ? (settings.n8n.workflowId ? `${settings.n8n.url}/workflow/${settings.n8n.workflowId}` : settings.n8n.url) : '#'}
+              target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open in n8n
+            </a>
+          </div>
+        }
+      />
 
       {/* Polling Controls */}
       <div className="flex items-center justify-between text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-2 border border-border">

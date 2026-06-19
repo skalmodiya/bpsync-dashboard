@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -315,16 +316,7 @@ export function RecordsPage() {
     <div className="flex flex-col h-full space-y-4">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold">Sync Records</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Showing {statusFilter === 'all' ? 'all' : statusFilter} records
-          {total > 0 && ` — ${total} rows`}
-          {statusFilter === 'all' && total > 0 && (
-            <span className="ml-2 text-xs bg-muted px-2 py-0.5 rounded" title="An employee with multiple errors appears as multiple rows (one per error). Dashboard shows unique employee count (50).">
-              Note: Employees with multiple errors appear as separate rows
-            </span>
-          )}
-        </p>
+        <PageHeader title="Sync Records" subtitle="Browse, filter and retry employee sync records" />
       </div>
 
       {/* Controls */}

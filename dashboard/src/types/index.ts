@@ -17,27 +17,22 @@ export interface Settings {
   mockS4hana: {
     serverUrl: string;
   };
+  s4Source: {
+    source: 'mock' | 'real';
+    destinationName: string;
+    sapClient: string;
+  };
   deployment: {
-    mode: 'local' | 'docker' | 'production';
+    mode: 'local' | 'docker' | 'cf';
   };
   email: {
     smtpHost: string;
     smtpPort: number;
     username: string;
     password: string;
+    fromEmail: string;
+    notificationEmails: string[];
   };
-  auth: {
-    iasUrl: string;
-    clientId: string;
-    clientSecret: string;
-  };
-}
-
-export interface AuthStatus {
-  ias_configured: boolean;
-  authenticated: boolean;
-  user: { name: string; email: string } | null;
-  login_url: string | null;
 }
 
 export interface N8nWorkflow {

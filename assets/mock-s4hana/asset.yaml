@@ -1,0 +1,27 @@
+apiVersion: asset.sap/v1
+kind: Asset
+metadata:
+  name: mock-s4hana
+  version: "1.0.0"
+type: agent
+container:
+  buildPath: ../../mock-s4hana
+  port: 8090
+probes:
+  startup:
+    path: /
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 18
+  liveness:
+    path: /
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3

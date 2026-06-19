@@ -21,6 +21,13 @@ export interface DashboardConfig {
   numberFormat: 'full' | 'compact';
   errorBreakdownStyle: 'bar' | 'list' | 'hidden';
   errorBreakdownLimit: number;
+  bgColor?: string;
+  logoUrl?: string;
+  headerGradient?: {
+    from: string;  // hex, default #2d1bb5
+    via: string;   // hex, default #6a1bbf
+    to: string;    // hex, default #a020c0
+  };
   cards: DashboardCardConfig[];
 }
 

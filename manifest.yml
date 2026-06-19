@@ -1,0 +1,139 @@
+---
+applications:
+
+  # ── AppRouter (XSUAA-secured entry point for the dashboard) ──────────────
+  - name: bpsync-approuter
+    path: approuter
+    buildpacks:
+      - https://github.com/cloudfoundry/nodejs-buildpack
+    memory: 256M
+    disk_quota: 512M
+    instances: 1
+    command: node node_modules/@sap/approuter/approuter.js
+    health-check-type: process
+    services:
+      - bpsync-xsuaa
+    env:
+      destinations: '[{"name":"bpsync-backend","url":"https://bpsync-backend.cfapps.us10.hana.ondemand.com","forwardAuthToken":true}]'
+
+  # ── 0. n8n Watchdog (auto-restart n8n when blocked) ──────────────────────
+  - name: n8n-watchdog
+    path: n8n-watchdog
+    buildpacks:
+      - https://github.com/cloudfoundry/nodejs-buildpack
+    stack: cflinuxfs4
+    memory: 128M
+    disk_quota: 512M
+    instances: 1
+    command: node watchdog.js
+    health-check-type: process
+    env:
+      N8N_URL: "https://bpsync-n8n.cfapps.us10.hana.ondemand.com"
+      N8N_ASSET_URL: "https://bpsync-n8n.cfapps.us10.hana.ondemand.com/assets/index-CDodBmSz.js"
+      CF_API_URL: "https://api.cf.us10.hana.ondemand.com"
+      CF_ORG: "dh-prj-vector-hackathon-apac-dev5-33bwo0ek"
+      CF_SPACE: "Dev"
+      N8N_APP_NAME: "bpsync-n8n"
+      CHECK_INTERVAL_MS: "180000"
+      FAIL_THRESHOLD: "3"
+      RESTART_COOLDOWN_MS: "180000"
+      # CF_USER and CF_PASSWORD set via cf set-env
+
+
+  - name: bupa-sync-agent
+    path: assets/bupa-sync-agent
+    buildpacks:
+      - python_buildpack
+    stack: cflinuxfs4
+    memory: 512M
+    disk_quota: 1G
+    instances: 1
+    command: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    health-check-type: http
+    health-check-http-endpoint: /.well-known/agent.json
+    services:
+      - bpsync-destination
+    env:
+      PYTHONUNBUFFERED: "1"
+      DEPLOYMENT_MODE: cf
+      AICORE_DESTINATION_NAME: "aicore"
+
+  # ── 2. Mock S/4HANA RFC Server (Python / FastAPI) ────────────────────────
+  - name: mock-s4hana
+    path: mock-s4hana
+    buildpacks:
+      - python_buildpack
+    stack: cflinuxfs4
+    memory: 256M
+    disk_quota: 512M
+    instances: 1
+    command: uvicorn main:app --host 0.0.0.0 --port $PORT
+    health-check-type: http
+    health-check-http-endpoint: /
+    env:
+      PYTHONUNBUFFERED: "1"
+
+  # ── 3. Dashboard (React SPA, pre-built) ──────────────────────────────────
+  - name: bpsync-dashboard
+    path: dashboard/dist
+    buildpacks:
+      - staticfile_buildpack
+    stack: cflinuxfs4
+    memory: 128M
+    disk_quota: 256M
+    instances: 1
+    health-check-type: http
+    health-check-http-endpoint: /
+
+  # ── 5. Backend API (FastAPI settings/proxy/auth layer) ───────────────────
+  - name: bpsync-backend
+    path: backend
+    buildpacks:
+      - python_buildpack
+    stack: cflinuxfs4
+    memory: 256M
+    disk_quota: 512M
+    instances: 1
+    command: uvicorn main:app --host 0.0.0.0 --port $PORT
+    health-check-type: http
+    health-check-http-endpoint: /health
+    services:
+      - bpsync-xsuaa
+      - bpsync-destination
+      - proj-vector-connectivity-service
+    env:
+      PYTHONUNBUFFERED: "1"
+      AICORE_DESTINATION_NAME: "aicore"
+      N8N_URL: "https://bpsync-n8n.cfapps.us10.hana.ondemand.com"
+      AGENT_URL: "https://bupa-sync-agent.cfapps.us10.hana.ondemand.com"
+      MOCK_S4_URL: "https://mock-s4hana.cfapps.us10.hana.ondemand.com"
+      ALLOWED_ORIGINS: "https://bpsync-dashboard.cfapps.us10.hana.ondemand.com"
+      DATABASE_URL: "postgresql://neondb_owner:REDACTED_ROTATE_NOW@ep-steep-truth-atkvnd1q.c-9.us-east-1.aws.neon.tech:5432/neondb?sslmode=require"
+      DEPLOYMENT_MODE: "cf"
+
+  - name: bpsync-n8n
+    docker:
+      image: n8nio/n8n:stable
+    memory: 1G
+    disk_quota: 2G
+    instances: 1
+    health-check-type: process
+    command: "sh -c 'export N8N_PORT=$PORT && n8n start'"
+    env:
+      N8N_LISTEN_ADDRESS: "0.0.0.0"
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: "https://bpsync-n8n.cfapps.us10.hana.ondemand.com/"
+      EXECUTIONS_DATA_SAVE_ON_ERROR: all
+      EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
+      GENERIC_TIMEZONE: Asia/Singapore
+      N8N_PUSH_BACKEND: websocket
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: "ep-steep-truth-atkvnd1q.c-9.us-east-1.aws.neon.tech"
+      DB_POSTGRESDB_PORT: "5432"
+      DB_POSTGRESDB_DATABASE: "neondb"
+      DB_POSTGRESDB_USER: "neondb_owner"
+      DB_POSTGRESDB_PASSWORD: "REDACTED_ROTATE_NOW"
+      DB_POSTGRESDB_SSL_ENABLED: "true"
+      DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED: "false"
+      DB_POSTGRESDB_POOL_SIZE: "2"
+      DB_POSTGRESDB_CONNECTION_TIMEOUT: "10000"

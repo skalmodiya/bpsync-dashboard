@@ -1,0 +1,9 @@
+server {
+    listen {{port}};
+    root /home/vcap/app/nginx/html;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

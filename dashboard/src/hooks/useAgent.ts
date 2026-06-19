@@ -2,6 +2,22 @@ import { useState, useCallback } from 'react';
 import type { AgentHealth, AgentInfo, AgentInvocation } from '../types';
 import { api } from '../lib/api';
 
+// Direct agent URL — bypasses backend proxy to avoid CF inter-app network restrictions
+const AGENT_URL = (window as any).__AGENT_URL__ || '';
+
+async function agentFetch(path: string, options?: RequestInit) {
+  try {
+    const res = await fetch(`${AGENT_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    const data = await res.json();
+    return { ok: res.ok, data, status: res.status };
+  } catch (e) {
+    return { ok: false, data: null, error: String(e) };
+  }
+}
+
 export function useAgent() {
   const [health, setHealth] = useState<AgentHealth | null>(null);
   const [info, setInfo] = useState<AgentInfo | null>(null);
@@ -11,23 +27,19 @@ export function useAgent() {
 
   const checkHealth = useCallback(async () => {
     setLoading(true);
-    const res = await api.get<AgentHealth>('/api/agent/health');
+    const res = await agentFetch('/health');
     if (res.ok && res.data) {
-      setHealth(res.data);
+      setHealth({ status: res.data.status === 'healthy' ? 'healthy' : 'degraded', lastCheck: new Date().toISOString() });
     } else {
-      setHealth({
-        status: 'offline',
-        lastCheck: new Date().toISOString(),
-      });
+      setHealth({ status: 'offline', lastCheck: new Date().toISOString() });
     }
     setLoading(false);
   }, []);
 
   const fetchInfo = useCallback(async () => {
-    const res = await api.get<any>('/api/agent/info');
-    if (res.ok && res.data && !res.data.error) {
+    const res = await agentFetch('/.well-known/agent.json');
+    if (res.ok && res.data) {
       const raw = res.data;
-      // Normalize capabilities: agent card returns an object, dashboard expects string[]
       let capabilities: string[] = [];
       if (Array.isArray(raw.capabilities)) {
         capabilities = raw.capabilities;
@@ -48,6 +60,7 @@ export function useAgent() {
   }, []);
 
   const fetchInvocations = useCallback(async () => {
+    // Invocation logs are stored on the backend — keep going through proxy
     const res = await api.get<AgentInvocation[]>('/api/agent/invocations');
     if (res.ok && res.data) {
       setInvocations(res.data);
@@ -56,25 +69,33 @@ export function useAgent() {
 
   const invokeAgent = useCallback(async (message: string) => {
     setError(null);
-    const res = await api.post<any>(
-      '/api/agent/invoke',
-      { message }
-    );
-    if (res.ok && res.data) {
-      const responseText = res.data.response || res.data.content || res.data.role === 'assistant' ? (res.data.content || res.data.response || JSON.stringify(res.data)) : JSON.stringify(res.data);
-      // Build invocation record from response
-      const invocation: AgentInvocation = res.data.invocation || {
+    const start = Date.now();
+    // Call agent directly, but also log via backend
+    const agentRes = await agentFetch('/invoke', {
+      method: 'POST',
+      body: JSON.stringify({ messages: [{ role: 'user', content: message }] }),
+    });
+
+    if (agentRes.ok && agentRes.data) {
+      const result = agentRes.data.result || agentRes.data;
+      const content = result.content || result.response || JSON.stringify(result);
+      const duration = Date.now() - start;
+
+      // Also log invocation via backend for history
+      api.post('/api/agent/invoke', { message }).catch(() => {});
+
+      const invocation: AgentInvocation = {
         id: `inv-${Date.now()}`,
         timestamp: new Date().toISOString(),
         message,
-        response: typeof responseText === 'string' ? responseText : JSON.stringify(responseText),
-        duration: res.data.duration || 0,
-        tokenUsage: res.data.tokenUsage || { prompt: 0, completion: 0, total: 0 },
+        response: content,
+        duration,
+        tokenUsage: agentRes.data.tokenUsage || { prompt: 0, completion: 0, total: 0 },
       };
       setInvocations((prev) => [invocation, ...prev.slice(0, 19)]);
-      return typeof responseText === 'string' ? responseText : JSON.stringify(responseText);
+      return content;
     } else {
-      setError(res.error || 'Failed to invoke agent');
+      setError(agentRes.error || 'Failed to invoke agent');
       return null;
     }
   }, []);

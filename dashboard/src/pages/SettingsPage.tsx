@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useState, useEffect } from 'react';
 import { useSettings } from '../hooks/useSettings';
 import { useDashboardConfig } from '../hooks/useDashboardConfig';
@@ -6,12 +7,11 @@ import { Button } from '../components/Button';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { ConfigPanel } from '../components/ConfigPanel';
-import { AuthorizationTab } from '../components/AuthorizationTab';
 import { showToast } from '../components/Toast';
 import { api } from '../lib/api';
 import type { Settings, N8nWorkflow, LLMModel } from '../types';
 import type { DashboardConfig } from '../hooks/useDashboardConfig';
-import { CheckCircle, XCircle, Loader2, Cpu, Workflow, Server, Mail, Rocket, Shield, Palette, AlertTriangle, Lock } from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, Cpu, Workflow, Server, Mail, Rocket, Palette, AlertTriangle, Info } from 'lucide-react';
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -19,10 +19,8 @@ const TABS = [
   { id: 'customize', label: 'Customize', icon: Palette },
   { id: 'llm', label: 'LLM', icon: Cpu },
   { id: 'n8n', label: 'n8n', icon: Workflow },
-  { id: 's4hana', label: 'Mock S/4', icon: Server },
+  { id: 's4hana', label: 'S/4HANA', icon: Server },
   { id: 'email', label: 'Email', icon: Mail },
-  { id: 'auth', label: 'Auth', icon: Shield },
-  { id: 'authorization', label: 'Authorization', icon: Lock },
   { id: 'deployment', label: 'Deploy', icon: Rocket },
   { id: 'danger', label: 'Danger Zone', icon: AlertTriangle },
 ] as const;
@@ -30,20 +28,21 @@ const TABS = [
 type TabId = typeof TABS[number]['id'];
 
 export function SettingsPage() {
-  const { settings, setSettings, loading, saving, saveSettings, testConnection, sendTestEmail, fetchN8nWorkflows, fetchLlmModels } = useSettings();
+  const { settings, setSettings, loading, saving, saveSettings, testConnection, sendTestEmail, fetchN8nWorkflows, fetchLlmModels, fetchAiCoreDeployments } = useSettings();
   const { config: dashConfig, loading: dashConfigLoading, saving: dashConfigSaving, updateConfig: updateDashConfig, resetConfig: resetDashConfig } = useDashboardConfig();
   const [testStatuses, setTestStatuses] = useState<Record<string, TestStatus>>({});
   const [testMessages, setTestMessages] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState<TabId>('customize');
   const [configPanelOpen, setConfigPanelOpen] = useState(false);
 
-  // Dynamic dropdown state
   const [n8nWorkflows, setN8nWorkflows] = useState<N8nWorkflow[]>([]);
   const [llmModels, setLlmModels] = useState<LLMModel[]>([]);
+  const [aiCoreDeployments, setAiCoreDeployments] = useState<Array<{ id: string; name: string; model_name: string; deployment_url: string }>>([]);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [loadingDeployments, setLoadingDeployments] = useState(false);
+  const [aiCoreDestination, setAiCoreDestination] = useState('');
 
-  // Danger zone state
   const [resetTargets, setResetTargets] = useState<Set<string>>(new Set());
   const [resetPurpose, setResetPurpose] = useState('');
   const [resetConfirmation, setResetConfirmation] = useState('');
@@ -54,8 +53,7 @@ export function SettingsPage() {
     { value: 'audit_log', label: 'Audit Log', description: 'Clear all audit events (reset events are always preserved)' },
     { value: 'agent_logs', label: 'Agent Invocation Logs', description: 'Delete all stored agent interaction logs' },
     { value: 'sync_history', label: 'Sync Execution History', description: 'Clear the sync run history' },
-    { value: 'sessions', label: 'User Sessions', description: 'Force logout all users (you will need to login again)' },
-    { value: 'settings', label: 'Settings (Except Auth)', description: 'Reset all settings to defaults (auth/IAS config preserved)' },
+    { value: 'settings', label: 'Settings', description: 'Reset all settings to defaults' },
   ];
 
   const handleResetApp = async () => {
@@ -78,14 +76,16 @@ export function SettingsPage() {
     setResetting(false);
   };
 
-  // Auto-load models when LLM tab is active
   useEffect(() => {
     if (activeTab === 'llm' && !loading) {
-      handleLoadModels();
+      if (settings.llm.provider === 'sap-ai-core') {
+        handleLoadDeployments();
+      } else {
+        handleLoadModels();
+      }
     }
-  }, [activeTab, loading]);
+  }, [activeTab, loading, settings.llm.provider]);
 
-  // Auto-load workflows when n8n tab is active
   useEffect(() => {
     if (activeTab === 'n8n' && !loading) {
       handleLoadWorkflows();
@@ -108,12 +108,16 @@ export function SettingsPage() {
     if (res.ok && res.data) {
       const data = res.data as any;
       const isSuccess = data.success === true || data.status === 'connected' || data.status === 'ok';
+      const isReachable = typeof data.status === 'string' && data.status.startsWith('reachable');
       if (isSuccess) {
         setTestStatuses((s) => ({ ...s, [type]: 'success' }));
         setTestMessages((s) => ({ ...s, [type]: data.message || data.status || 'Connected!' }));
+      } else if (isReachable) {
+        setTestStatuses((s) => ({ ...s, [type]: 'success' }));
+        setTestMessages((s) => ({ ...s, [type]: `${data.status} (HTTP ${data.http_status})` }));
       } else {
         setTestStatuses((s) => ({ ...s, [type]: 'error' }));
-        setTestMessages((s) => ({ ...s, [type]: data.message || data.error || 'Connection failed' }));
+        setTestMessages((s) => ({ ...s, [type]: data.message || data.error || data.detail || 'Connection failed' }));
       }
     } else {
       setTestStatuses((s) => ({ ...s, [type]: 'error' }));
@@ -155,6 +159,24 @@ export function SettingsPage() {
     setLoadingModels(false);
   };
 
+  const handleLoadDeployments = async () => {
+    setLoadingDeployments(true);
+    const res = await fetchAiCoreDeployments();
+    if (res.ok && res.data) {
+      const data = res.data as any;
+      if (data.deployments) {
+        setAiCoreDeployments(data.deployments);
+        setAiCoreDestination(data.destination || '');
+        setTestMessages((s) => ({ ...s, llmModels: '' }));
+      } else {
+        setTestMessages((s) => ({ ...s, llmModels: data.error || 'No deployments found' }));
+      }
+    } else {
+      setTestMessages((s) => ({ ...s, llmModels: res.error || 'Failed to load deployments' }));
+    }
+    setLoadingDeployments(false);
+  };
+
   const update = <K extends keyof Settings>(section: K, updates: Partial<Settings[K]>) => {
     setSettings((prev: Settings) => ({
       ...prev,
@@ -179,13 +201,8 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="max-w-4xl w-full">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure connections and deployment options. All settings are persisted to the backend.
-        </p>
-      </div>
+    <div className="w-full">
+      <PageHeader title="Settings" subtitle="Configure connections and deployment options. All settings are persisted to the backend." />
 
       {/* Tab Navigation */}
       <div className="flex border-b border-border mb-6 overflow-x-auto">
@@ -208,7 +225,6 @@ export function SettingsPage() {
         })}
       </div>
 
-      {/* Tab Content */}
       <div className="space-y-6">
 
       {/* Customization */}
@@ -216,9 +232,6 @@ export function SettingsPage() {
         <div className="space-y-4">
           <Card title="Dashboard Customization" description="Configure dashboard cards, layout, and display preferences">
             <div className="space-y-4">
-              <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                <p>Only administrators can modify these settings. Changes affect all dashboard users.</p>
-              </div>
               <Button
                 variant="primary"
                 size="sm"
@@ -246,9 +259,6 @@ export function SettingsPage() {
                   className="w-full max-w-[200px] rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <p className="text-xs text-muted-foreground">
-                If there are more error categories than this limit, a "View All Errors" link will appear on the dashboard.
-              </p>
             </div>
           </Card>
 
@@ -268,39 +278,293 @@ export function SettingsPage() {
           />
 
           <Card title="Theme" description="Application appearance">
-            <div className="space-y-3">
-              <div className="flex gap-3">
-                {(['light', 'dark', 'system'] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => {
-                      if (mode === 'system') {
-                        localStorage.removeItem('theme');
-                        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                        document.documentElement.classList.toggle('dark', prefersDark);
-                      } else if (mode === 'dark') {
-                        localStorage.setItem('theme', 'dark');
-                        document.documentElement.classList.add('dark');
-                      } else {
-                        localStorage.setItem('theme', 'light');
-                        document.documentElement.classList.remove('dark');
-                      }
-                      // Force re-render
-                      setSettings((s) => ({ ...s }));
-                    }}
-                    className={`px-4 py-2 rounded-md border text-sm capitalize transition-colors ${
-                      (mode === 'system' && !localStorage.getItem('theme')) ||
-                      (mode === 'dark' && localStorage.getItem('theme') === 'dark') ||
-                      (mode === 'light' && localStorage.getItem('theme') === 'light')
-                        ? 'border-primary bg-primary/10 text-primary font-medium'
-                        : 'border-border hover:bg-muted'
-                    }`}
+            <div className="flex gap-3">
+              {(['light', 'dark', 'system'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => {
+                    if (mode === 'system') {
+                      localStorage.removeItem('theme');
+                      document.documentElement.classList.toggle('dark', window.matchMedia('(prefers-color-scheme: dark)').matches);
+                    } else if (mode === 'dark') {
+                      localStorage.setItem('theme', 'dark');
+                      document.documentElement.classList.add('dark');
+                    } else {
+                      localStorage.setItem('theme', 'light');
+                      document.documentElement.classList.remove('dark');
+                    }
+                    setSettings((s) => ({ ...s }));
+                  }}
+                  className={`px-4 py-2 rounded-md border text-sm capitalize transition-colors ${
+                    (mode === 'system' && !localStorage.getItem('theme')) ||
+                    (mode === 'dark' && localStorage.getItem('theme') === 'dark') ||
+                    (mode === 'light' && localStorage.getItem('theme') === 'light')
+                      ? 'border-primary bg-primary/10 text-primary font-medium'
+                      : 'border-border hover:bg-muted'
+                  }`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          <Card title="Header Gradient" description="Customize the gradient colors used in page headers across the app.">
+            <div className="space-y-4">
+              {/* Live preview */}
+              {(() => {
+                const g = dashConfig.headerGradient ?? { from: '#2d1bb5', via: '#6a1bbf', to: '#a020c0' };
+                return (
+                  <div
+                    className="rounded-xl h-14 flex items-center px-5 transition-all duration-300"
+                    style={{ background: `linear-gradient(to right, ${g.from}, ${g.via}, ${g.to})` }}
                   >
-                    {mode}
-                  </button>
-                ))}
+                    <span className="text-white font-bold text-base">Header Preview</span>
+                  </div>
+                );
+              })()}
+
+              {/* Color stops */}
+              <div className="grid grid-cols-3 gap-4">
+                {(['from', 'via', 'to'] as const).map((stop) => {
+                  const defaults = { from: '#2d1bb5', via: '#6a1bbf', to: '#a020c0' };
+                  const current = (dashConfig.headerGradient?.[stop]) ?? defaults[stop];
+                  return (
+                    <div key={stop} className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground capitalize">
+                        {stop === 'from' ? 'Start color' : stop === 'via' ? 'Middle color' : 'End color'}
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={current}
+                          onChange={(e) => updateDashConfig({
+                            ...dashConfig,
+                            headerGradient: {
+                              from: dashConfig.headerGradient?.from ?? defaults.from,
+                              via:  dashConfig.headerGradient?.via  ?? defaults.via,
+                              to:   dashConfig.headerGradient?.to   ?? defaults.to,
+                              [stop]: e.target.value,
+                            },
+                          })}
+                          className="h-9 w-10 rounded-md border border-border cursor-pointer p-0.5 bg-transparent"
+                        />
+                        <input
+                          type="text"
+                          value={current}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                              updateDashConfig({
+                                ...dashConfig,
+                                headerGradient: {
+                                  from: dashConfig.headerGradient?.from ?? defaults.from,
+                                  via:  dashConfig.headerGradient?.via  ?? defaults.via,
+                                  to:   dashConfig.headerGradient?.to   ?? defaults.to,
+                                  [stop]: val,
+                                },
+                              });
+                            }
+                          }}
+                          className="flex-1 min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+
+              {/* Preset palettes */}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Presets</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: 'SAP Joule (default)', from: '#2d1bb5', via: '#6a1bbf', to: '#a020c0' },
+                    { label: 'Ocean Blue',  from: '#0c4a6e', via: '#0369a1', to: '#0ea5e9' },
+                    { label: 'Forest',     from: '#14532d', via: '#15803d', to: '#22c55e' },
+                    { label: 'Sunset',     from: '#7c2d12', via: '#c2410c', to: '#f97316' },
+                    { label: 'Rose',       from: '#881337', via: '#be123c', to: '#f43f5e' },
+                    { label: 'Slate',      from: '#0f172a', via: '#1e293b', to: '#475569' },
+                    { label: 'Teal',       from: '#134e4a', via: '#0f766e', to: '#14b8a6' },
+                    { label: 'Amber',      from: '#78350f', via: '#b45309', to: '#f59e0b' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      title={preset.label}
+                      onClick={() => updateDashConfig({ ...dashConfig, headerGradient: preset })}
+                      className="group relative h-8 w-16 rounded-lg overflow-hidden border-2 transition-all hover:scale-105 hover:shadow-md"
+                      style={{
+                        background: `linear-gradient(to right, ${preset.from}, ${preset.via}, ${preset.to})`,
+                        borderColor: JSON.stringify(dashConfig.headerGradient) === JSON.stringify(preset) ||
+                          (!dashConfig.headerGradient && preset.label.includes('default'))
+                          ? 'white' : 'transparent',
+                      }}
+                    >
+                      <span className="sr-only">{preset.label}</span>
+                      <span className="absolute inset-0 flex items-end justify-center pb-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-[8px] text-white/90 font-medium bg-black/30 px-1 rounded">
+                          {preset.label.split(' ')[0]}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reset */}
+              {dashConfig.headerGradient && (
+                <button
+                  onClick={() => updateDashConfig({ ...dashConfig, headerGradient: undefined })}
+                  className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+                >
+                  Reset to default (SAP Joule)
+                </button>
+              )}
+            </div>
+          </Card>
+
+          <Card title="Sidebar Logo" description="Upload a custom logo for the sidebar header. Replaces the default SAP logo.">
+            <div className="space-y-3">
+              {/* Preview + upload */}
+              <div className="flex items-center gap-5">
+                {/* Current logo preview */}
+                <div className="flex h-14 w-36 items-center justify-center rounded-lg border border-border/60
+                  bg-gradient-to-b from-[#2d1bb5] to-[#1a0f7a] flex-shrink-0">
+                  {dashConfig.logoUrl ? (
+                    <img src={dashConfig.logoUrl} alt="Logo preview" className="h-7 w-auto max-w-[80px] object-contain" />
+                  ) : (
+                    /* Default SAP logo preview */
+                    <svg viewBox="0 0 60 30" className="h-7 w-auto" aria-label="SAP" fill="none">
+                      <path d="M0 4 C0 1.8 1.8 0 4 0 L52 0 L60 8 L60 26 C60 28.2 58.2 30 56 30 L4 30 C1.8 30 0 28.2 0 26 Z" fill="#0070F2"/>
+                      <text x="30" y="19" dominantBaseline="middle" textAnchor="middle"
+                        fontFamily="Arial,Helvetica,sans-serif" fontWeight="bold" fontSize="13.5"
+                        letterSpacing="1.5" fill="white">SAP</text>
+                    </svg>
+                  )}
+                </div>
+
+                {/* Upload controls */}
+                <div className="flex-1 space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer w-fit">
+                    <input
+                      type="file"
+                      accept="image/png,image/svg+xml,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 100 * 1024) {
+                          alert('Logo must be under 100KB');
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          updateDashConfig({ ...dashConfig, logoUrl: ev.target?.result as string });
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = '';
+                      }}
+                    />
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium
+                      rounded-lg border border-border bg-background hover:bg-muted transition-colors cursor-pointer">
+                      Upload Logo
+                    </span>
+                  </label>
+                  {dashConfig.logoUrl && (
+                    <button
+                      onClick={() => updateDashConfig({ ...dashConfig, logoUrl: '' })}
+                      className="text-xs text-muted-foreground hover:text-destructive underline transition-colors block"
+                    >
+                      Remove — restore default SAP logo
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Design guidelines */}
+              <div className="rounded-lg bg-muted/40 border border-border/50 px-3 py-2.5 text-xs text-muted-foreground space-y-1">
+                <p className="font-medium text-foreground">Logo guidelines for this space:</p>
+                <ul className="space-y-0.5 ml-2">
+                  <li>• <strong>Height:</strong> 28px displayed (upload at 56px for retina — 2×)</li>
+                  <li>• <strong>Width:</strong> Max 80px displayed (sidebar header is 240px wide)</li>
+                  <li>• <strong>Format:</strong> SVG (recommended), PNG, or WebP with transparent background</li>
+                  <li>• <strong>File size:</strong> Max 100KB</li>
+                  <li>• <strong>Background:</strong> Transparent — logo sits on the dark sidebar gradient</li>
+                  <li>• <strong>Color:</strong> White or light-colored logo works best on the dark background</li>
+                </ul>
+              </div>
+            </div>
+          </Card>
+
+          <Card title="Background Color" description="Customize the main background color of the app (light mode)">
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                {/* Color picker */}
+                <div className="relative">
+                  <input
+                    type="color"
+                    value={dashConfig.bgColor || '#f5f5fa'}
+                    onChange={(e) => updateDashConfig({ ...dashConfig, bgColor: e.target.value })}
+                    className="h-10 w-20 rounded-lg border border-border cursor-pointer p-0.5 bg-transparent"
+                    title="Pick background color"
+                  />
+                </div>
+                {/* Current hex value */}
+                <input
+                  type="text"
+                  value={dashConfig.bgColor || ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (/^#[0-9A-Fa-f]{0,6}$/.test(val)) {
+                      updateDashConfig({ ...dashConfig, bgColor: val });
+                    }
+                  }}
+                  placeholder="#f5f5fa"
+                  className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                {/* Preset swatches */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[
+                    { label: 'Default', color: '' },
+                    { label: 'White', color: '#ffffff' },
+                    { label: 'Warm', color: '#faf8f5' },
+                    { label: 'Cool', color: '#f0f4ff' },
+                    { label: 'Slate', color: '#f1f5f9' },
+                    { label: 'Stone', color: '#f5f4f0' },
+                    { label: 'Mint', color: '#f0faf4' },
+                    { label: 'Rose', color: '#fff0f3' },
+                  ].map(({ label, color }) => (
+                    <button
+                      key={label}
+                      title={label}
+                      onClick={() => updateDashConfig({ ...dashConfig, bgColor: color })}
+                      className={`relative h-7 w-7 rounded-full border-2 transition-all hover:scale-110 ${
+                        (dashConfig.bgColor || '') === color
+                          ? 'border-primary shadow-md scale-110'
+                          : 'border-border hover:border-primary/50'
+                      }`}
+                      style={{ backgroundColor: color || 'hsl(240 20% 98%)' }}
+                    >
+                      {(dashConfig.bgColor || '') === color && (
+                        <span className="absolute inset-0 flex items-center justify-center text-primary text-[10px] font-bold">✓</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {/* Reset button */}
+                {dashConfig.bgColor && (
+                  <button
+                    onClick={() => updateDashConfig({ ...dashConfig, bgColor: '' })}
+                    className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Changes apply instantly. The color is saved to your dashboard configuration.
+              </p>
             </div>
           </Card>
         </div>
@@ -308,496 +572,474 @@ export function SettingsPage() {
 
       {/* LLM Configuration */}
       {activeTab === 'llm' && (
-      <Card title="LLM Configuration" description="Configure the language model provider">
-        <div className="space-y-4">
-          <Select
-            label="Provider"
-            value={settings.llm.provider}
-            onChange={(e) => update('llm', { provider: e.target.value as Settings['llm']['provider'] })}
-            options={[
-              { value: 'local-proxy', label: 'Local Proxy (LiteLLM)' },
-              { value: 'sap-ai-core', label: 'SAP AI Core' },
-            ]}
-          />
-          <Input
-            label="Base URL"
-            value={settings.llm.baseUrl}
-            onChange={(e) => update('llm', { baseUrl: e.target.value })}
-            placeholder="http://localhost:6655/litellm/v1"
-          />
-          <Input
-            label="API Key"
-            type="password"
-            value={settings.llm.apiKey}
-            onChange={(e) => {
-              const newKey = e.target.value;
-              update('llm', { apiKey: newKey });
-              // Auto-load models when key is entered (debounced)
-              if (newKey && newKey.length > 3 && !newKey.startsWith('*')) {
-                clearTimeout((window as any).__llmModelTimer);
-                (window as any).__llmModelTimer = setTimeout(async () => {
-                  setLoadingModels(true);
-                  const updatedSettings = { ...settings, llm: { ...settings.llm, apiKey: newKey } };
-                  const res = await fetchLlmModels(updatedSettings);
-                  if (res.ok && res.data) {
-                    const data = res.data as any;
-                    if (data.models) {
-                      setLlmModels(data.models);
-                      setTestMessages((s) => ({ ...s, llmModels: '' }));
-                    } else {
-                      setTestMessages((s) => ({ ...s, llmModels: data.detail || data.error || 'Failed' }));
-                    }
-                  } else {
-                    setTestMessages((s) => ({ ...s, llmModels: res.error || 'Failed to fetch models' }));
-                  }
-                  setLoadingModels(false);
-                }, 800);
-              }
-            }}
-            placeholder="Enter API key to auto-load models..."
-          />
-          <div>
-            {loadingModels ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading models...
+        <Card title="LLM Configuration" description="Configure the language model provider">
+          <div className="space-y-4">
+            <Select
+              label="Provider"
+              value={settings.llm.provider}
+              onChange={(e) => {
+                const p = e.target.value as Settings['llm']['provider'];
+                update('llm', { provider: p, model: '' });
+                if (p === 'sap-ai-core') setLlmModels([]);
+                else setAiCoreDeployments([]);
+              }}
+              options={[
+                { value: 'sap-ai-core', label: 'SAP AI Core (BTP Destination)' },
+                { value: 'local-proxy', label: 'Local Proxy (LiteLLM)' },
+              ]}
+            />
+
+            {/* SAP AI Core via BTP Destination */}
+            {settings.llm.provider === 'sap-ai-core' && (
+              <div className="space-y-4">
+                <div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-700 dark:text-blue-300">
+                  <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium">Credentials via BTP Destination</p>
+                    <p className="mt-0.5">
+                      AI Core credentials are resolved from the BTP destination named{' '}
+                      <code className="bg-blue-100 dark:bg-blue-800/50 px-1 rounded">
+                        {aiCoreDestination || 'aicore'}
+                      </code>.
+                      To change the destination name, set the{' '}
+                      <code className="bg-blue-100 dark:bg-blue-800/50 px-1 rounded">AICORE_DESTINATION_NAME</code>{' '}
+                      environment variable on the backend app and redeploy.
+                    </p>
+                  </div>
+                </div>
+
+                <div>
+                  {loadingDeployments ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Fetching deployments from SAP AI Core...
+                    </div>
+                  ) : (
+                    <Select
+                      label="Deployment (Model)"
+                      value={settings.llm.model}
+                      onChange={(e) => update('llm', { model: e.target.value })}
+                      options={[
+                        {
+                          value: '',
+                          label: aiCoreDeployments.length === 0
+                            ? '-- No deployments found (check destination config) --'
+                            : '-- Select a deployment --',
+                        },
+                        ...aiCoreDeployments.map((d) => ({
+                          value: d.id,
+                          label: d.model_name ? `${d.model_name} (${d.id})` : d.name || d.id,
+                        })),
+                      ]}
+                    />
+                  )}
+                  {testMessages.llmModels && (
+                    <p className="text-xs text-red-500 mt-1">{testMessages.llmModels}</p>
+                  )}
+                  <button
+                    className="text-xs text-blue-500 hover:underline mt-1"
+                    onClick={() => handleLoadDeployments()}
+                  >
+                    Reload deployments
+                  </button>
+                </div>
               </div>
-            ) : (
-              <Select
-                label="Model"
-                value={settings.llm.model}
-                onChange={(e) => update('llm', { model: e.target.value })}
-                options={[
-                  { value: '', label: llmModels.length === 0 ? '-- Enter API key to load models --' : '-- Select a model --' },
-                  ...llmModels.map((m) => ({ value: m.id, label: m.name })),
-                ]}
-              />
             )}
-            {testMessages.llmModels && (
-              <p className="text-xs text-red-500 mt-1">{testMessages.llmModels}</p>
+
+            {/* Local Proxy */}
+            {settings.llm.provider === 'local-proxy' && (
+              <div className="space-y-4">
+                <Input
+                  label="Base URL"
+                  value={settings.llm.baseUrl}
+                  onChange={(e) => update('llm', { baseUrl: e.target.value })}
+                  placeholder="http://localhost:6655/litellm/v1"
+                />
+                <Input
+                  label="API Key"
+                  type="password"
+                  value={settings.llm.apiKey}
+                  onChange={(e) => {
+                    const newKey = e.target.value;
+                    update('llm', { apiKey: newKey });
+                    if (newKey && newKey.length > 3 && !newKey.startsWith('*')) {
+                      clearTimeout((window as any).__llmModelTimer);
+                      (window as any).__llmModelTimer = setTimeout(async () => {
+                        setLoadingModels(true);
+                        const updatedSettings = { ...settings, llm: { ...settings.llm, apiKey: newKey } };
+                        const res = await fetchLlmModels(updatedSettings);
+                        if (res.ok && res.data) {
+                          const data = res.data as any;
+                          if (data.models) setLlmModels(data.models);
+                          else setTestMessages((s) => ({ ...s, llmModels: data.error || 'Failed' }));
+                        }
+                        setLoadingModels(false);
+                      }, 800);
+                    }
+                  }}
+                  placeholder="Enter API key to auto-load models..."
+                />
+                <div>
+                  {loadingModels ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Loading models...
+                    </div>
+                  ) : (
+                    <Select
+                      label="Model"
+                      value={settings.llm.model}
+                      onChange={(e) => update('llm', { model: e.target.value })}
+                      options={[
+                        { value: '', label: llmModels.length === 0 ? '-- Enter API key to load models --' : '-- Select a model --' },
+                        ...llmModels.map((m) => ({ value: m.id, label: m.name })),
+                      ]}
+                    />
+                  )}
+                  {testMessages.llmModels && (
+                    <p className="text-xs text-red-500 mt-1">{testMessages.llmModels}</p>
+                  )}
+                </div>
+              </div>
             )}
+
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={() => handleTest('llm')} loading={testStatuses.llm === 'testing'}>
+                Test Connection
+              </Button>
+              <TestIndicator type="llm" />
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTest('llm')}
-              loading={testStatuses.llm === 'testing'}
-            >
-              Test Connection
-            </Button>
-            <TestIndicator type="llm" />
-          </div>
-        </div>
-      </Card>
+        </Card>
       )}
 
       {/* n8n Connection */}
       {activeTab === 'n8n' && (
-      <Card title="n8n Connection" description="Configure the n8n workflow automation platform">
-        <div className="space-y-4">
-          <Input
-            label="n8n URL"
-            value={settings.n8n.url}
-            onChange={(e) => update('n8n', { url: e.target.value })}
-            placeholder="http://localhost:5678"
-          />
-          <Input
-            label="API Key"
-            type="password"
-            value={settings.n8n.apiKey}
-            onChange={(e) => {
-              const newKey = e.target.value;
-              update('n8n', { apiKey: newKey });
-              // Auto-load workflows when key is entered
-              if (newKey && newKey.length > 5 && !newKey.startsWith('*')) {
-                clearTimeout((window as any).__n8nWfTimer);
-                (window as any).__n8nWfTimer = setTimeout(async () => {
-                  setLoadingWorkflows(true);
-                  const updatedSettings = { ...settings, n8n: { ...settings.n8n, apiKey: newKey } };
-                  const res = await fetchN8nWorkflows(updatedSettings);
-                  if (res.ok && res.data) {
-                    const data = res.data as any;
-                    if (data.workflows) {
-                      setN8nWorkflows(data.workflows);
-                      setTestMessages((s) => ({ ...s, n8nWorkflows: '' }));
-                    } else {
-                      setTestMessages((s) => ({ ...s, n8nWorkflows: data.detail || data.error || 'Failed' }));
+        <Card title="n8n Connection" description="Configure the n8n workflow automation platform">
+          <div className="space-y-4">
+            <Input label="n8n URL" value={settings.n8n.url} onChange={(e) => update('n8n', { url: e.target.value })} placeholder="http://localhost:5678" />
+            <Input
+              label="API Key"
+              type="password"
+              value={settings.n8n.apiKey}
+              onChange={(e) => {
+                const newKey = e.target.value;
+                update('n8n', { apiKey: newKey });
+                if (newKey && newKey.length > 5 && !newKey.startsWith('*')) {
+                  clearTimeout((window as any).__n8nWfTimer);
+                  (window as any).__n8nWfTimer = setTimeout(async () => {
+                    setLoadingWorkflows(true);
+                    const updatedSettings = { ...settings, n8n: { ...settings.n8n, apiKey: newKey } };
+                    const res = await fetchN8nWorkflows(updatedSettings);
+                    if (res.ok && res.data) {
+                      const data = res.data as any;
+                      if (data.workflows) setN8nWorkflows(data.workflows);
+                      else setTestMessages((s) => ({ ...s, n8nWorkflows: data.error || 'Failed' }));
                     }
-                  } else {
-                    setTestMessages((s) => ({ ...s, n8nWorkflows: res.error || 'Failed to fetch workflows' }));
-                  }
-                  setLoadingWorkflows(false);
-                }, 800);
-              }
-            }}
-            placeholder="Enter API key to auto-load workflows..."
-          />
-          <div>
-            {loadingWorkflows ? (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading workflows...
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <Select
-                  label="Main Sync Workflow"
-                  value={settings.n8n.workflowId}
-                  onChange={(e) => update('n8n', { workflowId: e.target.value })}
-                  options={[
-                    { value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select main sync workflow --' },
-                    ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` })),
-                  ]}
-                />
-                <Select
-                  label="Retry Sync Workflow"
-                  value={settings.n8n.retryWorkflowId}
-                  onChange={(e) => update('n8n', { retryWorkflowId: e.target.value })}
-                  options={[
-                    { value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select retry workflow --' },
-                    ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` })),
-                  ]}
-                />
-                <Select
-                  label="Agent Fix Workflow"
-                  value={settings.n8n.agentFixWorkflowId}
-                  onChange={(e) => update('n8n', { agentFixWorkflowId: e.target.value })}
-                  options={[
-                    { value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select agent fix workflow --' },
-                    ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` })),
-                  ]}
-                />
-                <div>
-                  <label className="text-sm font-medium block mb-1.5">Monitor Workflows (multi-select)</label>
-                  <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-md p-2">
-                    {n8nWorkflows.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">Enter API key to load workflows</p>
-                    ) : (
-                      n8nWorkflows.map((w) => (
-                        <label key={w.id} className="flex items-center gap-2 text-xs cursor-pointer py-0.5">
-                          <input
-                            type="checkbox"
-                            checked={settings.n8n.monitoredWorkflowIds.includes(w.id)}
-                            onChange={(e) => {
-                              const current = settings.n8n.monitoredWorkflowIds || [];
-                              const next = e.target.checked
-                                ? [...current, w.id]
-                                : current.filter((id: string) => id !== w.id);
-                              update('n8n', { monitoredWorkflowIds: next });
-                            }}
-                            className="h-3 w-3"
-                          />
-                          {w.name} ({w.id}){w.active ? '' : ' [inactive]'}
-                        </label>
-                      ))
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Only selected workflows will appear in the Workflows monitor page.</p>
+                    setLoadingWorkflows(false);
+                  }, 800);
+                }
+              }}
+              placeholder="Enter API key to auto-load workflows..."
+            />
+            <div>
+              {loadingWorkflows ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                  <Loader2 className="h-3 w-3 animate-spin" />Loading workflows...
                 </div>
-              </div>
-            )}
-            {testMessages.n8nWorkflows && (
-              <p className="text-xs text-red-500 mt-1">{testMessages.n8nWorkflows}</p>
-            )}
+              ) : (
+                <div className="space-y-3">
+                  <Select label="Main Sync Workflow" value={settings.n8n.workflowId} onChange={(e) => update('n8n', { workflowId: e.target.value })}
+                    options={[{ value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select main sync workflow --' }, ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` }))]} />
+                  <Select label="Retry Sync Workflow" value={settings.n8n.retryWorkflowId} onChange={(e) => update('n8n', { retryWorkflowId: e.target.value })}
+                    options={[{ value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select retry workflow --' }, ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` }))]} />
+                  <Select label="Agent Fix Workflow" value={settings.n8n.agentFixWorkflowId} onChange={(e) => update('n8n', { agentFixWorkflowId: e.target.value })}
+                    options={[{ value: '', label: n8nWorkflows.length === 0 ? '-- Enter API key to load --' : '-- Select agent fix workflow --' }, ...n8nWorkflows.map((w) => ({ value: w.id, label: `${w.name} (${w.id})${w.active ? '' : ' [inactive]'}` }))]} />
+                  <div>
+                    <label className="text-sm font-medium block mb-1.5">Monitor Workflows</label>
+                    <div className="space-y-1 max-h-40 overflow-y-auto border border-border rounded-md p-2">
+                      {n8nWorkflows.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Enter API key to load workflows</p>
+                      ) : (
+                        n8nWorkflows.map((w) => (
+                          <label key={w.id} className="flex items-center gap-2 text-xs cursor-pointer py-0.5">
+                            <input type="checkbox" checked={settings.n8n.monitoredWorkflowIds.includes(w.id)}
+                              onChange={(e) => {
+                                const current = settings.n8n.monitoredWorkflowIds || [];
+                                update('n8n', { monitoredWorkflowIds: e.target.checked ? [...current, w.id] : current.filter((id: string) => id !== w.id) });
+                              }} className="h-3 w-3" />
+                            {w.name} ({w.id}){w.active ? '' : ' [inactive]'}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Only selected workflows appear in the Workflows monitor.</p>
+                  </div>
+                </div>
+              )}
+              {testMessages.n8nWorkflows && <p className="text-xs text-red-500 mt-1">{testMessages.n8nWorkflows}</p>}
+            </div>
+            <Input label="Webhook Base URL (optional)" value={settings.n8n.webhookUrl || ''} onChange={(e) => update('n8n', { webhookUrl: e.target.value })} placeholder="e.g. https://your-tunnel.ngrok-free.app" />
+            <p className="text-xs text-muted-foreground">If n8n is behind a tunnel, enter the public URL here. Leave empty to use the n8n URL above.</p>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={() => handleTest('n8n')} loading={testStatuses.n8n === 'testing'}>Test Connection</Button>
+              <TestIndicator type="n8n" />
+            </div>
           </div>
-          <Input
-            label="Webhook Base URL (optional)"
-            value={settings.n8n.webhookUrl || ''}
-            onChange={(e) => update('n8n', { webhookUrl: e.target.value })}
-            placeholder="e.g. https://your-tunnel.ngrok-free.app"
-          />
-          <p className="text-xs text-muted-foreground">
-            If n8n is behind a tunnel (ngrok, cloudflare), enter the public base URL here. Leave empty to use the n8n URL above.
-          </p>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTest('n8n')}
-              loading={testStatuses.n8n === 'testing'}
-            >
-              Test Connection
-            </Button>
-            <TestIndicator type="n8n" />
-          </div>
-        </div>
-      </Card>
+        </Card>
       )}
 
-      {/* Mock S/4HANA */}
+      {/* S/4HANA Source */}
       {activeTab === 's4hana' && (
-      <Card title="Mock S/4HANA" description="Configure the mock SAP S/4HANA server">
         <div className="space-y-4">
-          <Input
-            label="Server URL"
-            value={settings.mockS4hana.serverUrl}
-            onChange={(e) => update('mockS4hana', { serverUrl: e.target.value })}
-            placeholder="http://localhost:8090"
-          />
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTest('s4hana')}
-              loading={testStatuses.s4hana === 'testing'}
-            >
-              Test Connection
-            </Button>
-            <TestIndicator type="s4hana" />
-          </div>
+          <Card title="S/4HANA Data Source" description="Choose between the Mock server or a real S/4HANA system via BTP destination">
+            <div className="space-y-4">
+              {/* Source toggle */}
+              <div>
+                <label className="text-sm font-medium block mb-2">Data Source</label>
+                <div className="flex gap-3">
+                  {(['mock', 'real'] as const).map((src) => (
+                    <button
+                      key={src}
+                      type="button"
+                      onClick={() => update('s4Source', { source: src })}
+                      className={`px-4 py-2 rounded-md border text-sm font-medium transition-colors ${
+                        settings.s4Source.source === src
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border hover:bg-muted'
+                      }`}
+                    >
+                      {src === 'mock' ? 'Mock Server' : 'Real S/4HANA'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mock server config */}
+              {settings.s4Source.source === 'mock' && (
+                <div className="space-y-3">
+                  <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                    Using the mock S/4HANA server with simulated employee and BUPA data.
+                  </div>
+                  <Input label="Mock Server URL" value={settings.mockS4hana.serverUrl}
+                    onChange={(e) => update('mockS4hana', { serverUrl: e.target.value })}
+                    placeholder="http://localhost:8090" />
+                  <div className="flex items-center gap-3">
+                    <Button variant="outline" size="sm" onClick={() => handleTest('s4hana')} loading={testStatuses.s4hana === 'testing'}>
+                      Test Connection
+                    </Button>
+                    <TestIndicator type="s4hana" />
+                  </div>
+                </div>
+              )}
+
+              {/* Real S/4HANA config */}
+              {settings.s4Source.source === 'real' && (
+                <div className="space-y-3">
+                  <div className="rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-700 dark:text-blue-300">
+                    <p className="font-medium mb-1">Real S/4HANA via BTP Destination</p>
+                    <p>Calls are routed through the BTP Connectivity service (Cloud Connector) using the named destination. Ensure the destination service is bound to the backend app.</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium block mb-1">BTP Destination Name</label>
+                    <select
+                      value={settings.s4Source.destinationName}
+                      onChange={(e) => update('s4Source', { destinationName: e.target.value })}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="S4_SIA_I577956">S4_SIA_I577956 (SIA HTTPS 443)</option>
+                      <option value="SIA_I769350">SIA_I769350 (SIA HTTP 8001)</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Both destinations use OnPremise proxy via Cloud Connector with BasicAuthentication (user I577956, client 500).
+                    </p>
+                  </div>
+                  <Input
+                    label="SAP Client"
+                    value={settings.s4Source.sapClient}
+                    onChange={(e) => update('s4Source', { sapClient: e.target.value })}
+                    placeholder="500"
+                  />
+                  <div className="flex items-center gap-3">
+                    <Button variant="outline" size="sm" onClick={() => handleTest('s4hana')} loading={testStatuses.s4hana === 'testing'}>
+                      Test Connection
+                    </Button>
+                    <TestIndicator type="s4hana" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </Card>
         </div>
-      </Card>
+      )}
+
+
+      {/* Email/SMTP */}
+      {activeTab === 'email' && (
+        <Card title="Email / SMTP (Optional)" description="Configure email notifications">
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="SMTP Host" value={settings.email.smtpHost} onChange={(e) => update('email', { smtpHost: e.target.value })} placeholder="smtp.example.com" />
+              <Input label="SMTP Port" type="number" value={settings.email.smtpPort || ''} onChange={(e) => update('email', { smtpPort: parseInt(e.target.value) || 587 })} placeholder="587" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Username" value={settings.email.username} onChange={(e) => update('email', { username: e.target.value })} placeholder="user@example.com" />
+              <Input label="Password" type="password" value={settings.email.password} onChange={(e) => update('email', { password: e.target.value })} placeholder="••••••••" />
+            </div>
+            <Input label="From Email Address" value={settings.email.fromEmail} onChange={(e) => update('email', { fromEmail: e.target.value })} placeholder="bupa-sync@yourcompany.com" />
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Notification Recipients</label>
+              <div className="min-h-[42px] w-full rounded-md border border-input bg-background px-2 py-1.5 flex flex-wrap gap-1.5 cursor-text focus-within:ring-2 focus-within:ring-ring"
+                onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus()}>
+                {settings.email.notificationEmails.map((email, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary text-xs px-2 py-0.5">
+                    {email}
+                    <button type="button" className="hover:text-destructive ml-0.5"
+                      onClick={() => update('email', { notificationEmails: settings.email.notificationEmails.filter((_, j) => j !== i) })}>×</button>
+                  </span>
+                ))}
+                <input type="text" className="flex-1 min-w-[180px] bg-transparent text-sm outline-none placeholder:text-muted-foreground py-0.5"
+                  placeholder={settings.email.notificationEmails.length === 0 ? 'Enter email and press Enter...' : ''}
+                  onKeyDown={(e) => {
+                    const val = (e.target as HTMLInputElement).value.trim();
+                    if ((e.key === 'Enter' || e.key === ',') && val) {
+                      e.preventDefault();
+                      const emails = val.split(/[,\s]+/).map(v => v.trim()).filter(v => v.includes('@'));
+                      if (emails.length) {
+                        const existing = settings.email.notificationEmails;
+                        update('email', { notificationEmails: [...existing, ...emails.filter(em => !existing.includes(em))] });
+                        (e.target as HTMLInputElement).value = '';
+                      }
+                    }
+                    if (e.key === 'Backspace' && !(e.target as HTMLInputElement).value && settings.email.notificationEmails.length) {
+                      update('email', { notificationEmails: settings.email.notificationEmails.slice(0, -1) });
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const val = e.target.value.trim();
+                    if (val && val.includes('@')) {
+                      const emails = val.split(/[,\s]+/).map(v => v.trim()).filter(v => v.includes('@'));
+                      if (emails.length) {
+                        update('email', { notificationEmails: [...settings.email.notificationEmails, ...emails.filter(em => !settings.email.notificationEmails.includes(em))] });
+                        e.target.value = '';
+                      }
+                    }
+                  }} />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Button variant="outline" size="sm" onClick={() => handleTest('email')} loading={testStatuses.email === 'testing'}>Test Connection</Button>
+              <Button variant="outline" size="sm"
+                onClick={async () => {
+                  setTestStatuses((s) => ({ ...s, emailSend: 'testing' }));
+                  const res = await sendTestEmail();
+                  if (res.ok && res.data) {
+                    const data = res.data as any;
+                    if (data.status === 'sent') {
+                      setTestStatuses((s) => ({ ...s, emailSend: 'success' }));
+                      setTestMessages((s) => ({ ...s, emailSend: data.message || 'Email sent!' }));
+                    } else {
+                      setTestStatuses((s) => ({ ...s, emailSend: 'error' }));
+                      setTestMessages((s) => ({ ...s, emailSend: data.error || 'Failed' }));
+                    }
+                  } else {
+                    setTestStatuses((s) => ({ ...s, emailSend: 'error' }));
+                    setTestMessages((s) => ({ ...s, emailSend: res.error || 'Failed' }));
+                  }
+                }}
+                loading={testStatuses.emailSend === 'testing'}
+                disabled={settings.email.notificationEmails.length === 0}>
+                Send Test Email
+              </Button>
+              <TestIndicator type="email" />
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* Deployment Mode */}
       {activeTab === 'deployment' && (
-      <Card title="Deployment Mode" description="Select how this stack is deployed">
-        <div className="space-y-4">
-          <div className="flex gap-4">
-            {(['local', 'docker', 'production'] as const).map((mode) => (
-              <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="deployment-mode"
-                  value={mode}
-                  checked={settings.deployment.mode === mode}
-                  onChange={() => update('deployment', { mode })}
-                  className="h-4 w-4 text-primary"
-                />
-                <span className="text-sm capitalize">{mode}</span>
-              </label>
-            ))}
+        <Card title="Deployment Mode" description="Select how this stack is deployed">
+          <div className="space-y-4">
+            <div className="flex gap-4">
+              {(['local', 'docker', 'cf'] as const).map((mode) => (
+                <label key={mode} className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="deployment-mode" value={mode} checked={settings.deployment.mode === mode}
+                    onChange={() => update('deployment', { mode })} className="h-4 w-4 text-primary" />
+                  <span className="text-sm capitalize">{mode === 'cf' ? 'Cloud Foundry (BTP)' : mode}</span>
+                </label>
+              ))}
+            </div>
+            <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+              {settings.deployment.mode === 'local' && <p>Running all services locally.</p>}
+              {settings.deployment.mode === 'docker' && <p>Running via Docker Compose. Services communicate via Docker network.</p>}
+              {settings.deployment.mode === 'cf' && <p>Deployed on SAP BTP Cloud Foundry. XSUAA handles authentication. AI Core credentials resolved via BTP destination.</p>}
+            </div>
           </div>
-          <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
-            {settings.deployment.mode === 'local' && (
-              <p>Running all services locally. Ensure n8n, LiteLLM proxy, and mock-s4hana are started.</p>
-            )}
-            {settings.deployment.mode === 'docker' && (
-              <p>Running via Docker Compose. Services communicate via Docker network. Use service names as hosts.</p>
-            )}
-            {settings.deployment.mode === 'production' && (
-              <p>Production deployment. Ensure all endpoints use HTTPS and proper authentication is configured.</p>
-            )}
-          </div>
-        </div>
-      </Card>
-      )}
-
-      {/* Email/SMTP */}
-      {activeTab === 'email' && (
-      <Card title="Email / SMTP (Optional)" description="Configure email notifications">
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="SMTP Host"
-              value={settings.email.smtpHost}
-              onChange={(e) => update('email', { smtpHost: e.target.value })}
-              placeholder="smtp.example.com"
-            />
-            <Input
-              label="SMTP Port"
-              type="number"
-              value={settings.email.smtpPort || ''}
-              onChange={(e) => update('email', { smtpPort: parseInt(e.target.value) || 587 })}
-              placeholder="587"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Username"
-              value={settings.email.username}
-              onChange={(e) => update('email', { username: e.target.value })}
-              placeholder="user@example.com"
-            />
-            <Input
-              label="Password"
-              type="password"
-              value={settings.email.password}
-              onChange={(e) => update('email', { password: e.target.value })}
-              placeholder="••••••••"
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleTest('email')}
-              loading={testStatuses.email === 'testing'}
-            >
-              Test Connection
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                setTestStatuses((s) => ({ ...s, emailSend: 'testing' }));
-                setTestMessages((s) => ({ ...s, emailSend: '' }));
-                const res = await sendTestEmail();
-                if (res.ok && res.data) {
-                  const data = res.data as any;
-                  if (data.status === 'sent') {
-                    setTestStatuses((s) => ({ ...s, emailSend: 'success' }));
-                    setTestMessages((s) => ({ ...s, emailSend: data.message || 'Email sent! Check Mailpit at http://localhost:8025' }));
-                  } else {
-                    setTestStatuses((s) => ({ ...s, emailSend: 'error' }));
-                    setTestMessages((s) => ({ ...s, emailSend: data.error || 'Failed to send' }));
-                  }
-                } else {
-                  setTestStatuses((s) => ({ ...s, emailSend: 'error' }));
-                  setTestMessages((s) => ({ ...s, emailSend: res.error || 'Failed' }));
-                }
-              }}
-              loading={testStatuses.emailSend === 'testing'}
-            >
-              Send Test Email
-            </Button>
-            <TestIndicator type="email" />
-            <TestIndicator type="emailSend" />
-          </div>
-        </div>
-      </Card>
-      )}
-
-      {/* Auth / SAP IAS */}
-      {activeTab === 'auth' && (
-      <Card title="Authentication (SAP IAS)" description="Configure SAP Identity Authentication Service for SSO. Leave empty for anonymous local development.">
-        <div className="space-y-4">
-          <Input
-            label="IAS Tenant URL"
-            value={settings.auth.iasUrl}
-            onChange={(e) => update('auth', { iasUrl: e.target.value })}
-            placeholder="https://mytenant.accounts.ondemand.com"
-          />
-          <p className="text-xs text-muted-foreground">
-            The base URL of your SAP IAS tenant. Found in BTP cockpit under Security &rarr; Trust Configuration.
-          </p>
-          <Input
-            label="Client ID"
-            value={settings.auth.clientId}
-            onChange={(e) => update('auth', { clientId: e.target.value })}
-            placeholder="OIDC application client ID"
-          />
-          <Input
-            label="Client Secret"
-            type="password"
-            value={settings.auth.clientSecret}
-            onChange={(e) => update('auth', { clientSecret: e.target.value })}
-            placeholder="••••••••"
-          />
-          <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground space-y-1">
-            <p><strong>Note:</strong> Authentication is optional. If IAS is not configured, the dashboard works in anonymous mode.</p>
-            <p>When configured, users will be redirected to IAS for login. The redirect URI is derived automatically from the request origin (no manual configuration needed). Register all access URLs in your IAS application settings (e.g. <code>http://localhost:3001/api/auth/callback</code>, <code>http://your-ip:3001/api/auth/callback</code>).</p>
-          </div>
-        </div>
-      </Card>
-      )}
-
-      {/* Authorization */}
-      {activeTab === 'authorization' && (
-        <AuthorizationTab />
+        </Card>
       )}
 
       {/* Danger Zone */}
       {activeTab === 'danger' && (
-        <div className="space-y-6">
-          <div className="rounded-lg border-2 border-red-500/30 bg-red-500/5 p-6">
-            <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5" />
-              Danger Zone
-            </h3>
-            <p className="text-sm text-muted-foreground mt-1">
-              These actions are destructive and cannot be undone. A permanent audit record will be created.
-            </p>
-
-            <div className="mt-6 space-y-4">
-              <p className="text-sm font-medium">Select items to reset:</p>
-
-              {/* Selectable reset targets */}
-              <div className="space-y-2">
-                {RESET_TARGETS.map((target) => (
-                  <label key={target.value} className="flex items-start gap-3 p-3 rounded-md border border-border hover:border-red-300 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={resetTargets.has(target.value)}
-                      onChange={(e) => {
-                        const next = new Set(resetTargets);
-                        if (e.target.checked) next.add(target.value);
-                        else next.delete(target.value);
-                        setResetTargets(next);
-                      }}
-                      className="h-4 w-4 mt-0.5"
-                    />
-                    <div>
-                      <span className="text-sm font-medium">{target.label}</span>
-                      <p className="text-xs text-muted-foreground">{target.description}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-
-              {/* Purpose */}
-              <div>
-                <label className="text-sm font-medium block mb-1">Reason for reset</label>
-                <textarea
-                  value={resetPurpose}
-                  onChange={(e) => setResetPurpose(e.target.value)}
-                  placeholder="Explain why you are resetting the app (minimum 10 characters)..."
-                  rows={2}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-
-              {/* Confirmation */}
-              <div>
-                <label className="text-sm font-medium block mb-1">
-                  Type <code className="px-1 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded text-xs">DELETE</code> to confirm
-                </label>
-                <input
-                  type="text"
-                  value={resetConfirmation}
-                  onChange={(e) => setResetConfirmation(e.target.value)}
-                  placeholder="DELETE"
-                  className="w-full max-w-xs rounded-md border border-red-300 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
-                />
-              </div>
-
-              {/* Reset button */}
-              <button
-                onClick={handleResetApp}
-                disabled={
-                  resetConfirmation !== 'DELETE' ||
-                  resetTargets.size === 0 ||
-                  resetPurpose.length < 10 ||
-                  resetting
-                }
-                className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
-                Reset App
-              </button>
-
-              {resetResult && (
-                <div className="mt-4 rounded-md border border-border bg-muted/50 p-4">
-                  <p className="text-sm font-medium text-emerald-600 mb-2">Reset completed</p>
-                  <pre className="text-xs text-muted-foreground overflow-auto">
-                    {JSON.stringify(resetResult, null, 2)}
-                  </pre>
+        <div className="rounded-lg border-2 border-red-500/30 bg-red-500/5 p-6 space-y-4">
+          <h3 className="text-lg font-semibold text-red-600 dark:text-red-400 flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5" />
+            Danger Zone
+          </h3>
+          <p className="text-sm text-muted-foreground">These actions are destructive and cannot be undone. A permanent audit record will be created.</p>
+          <p className="text-sm font-medium">Select items to reset:</p>
+          <div className="space-y-2">
+            {RESET_TARGETS.map((target) => (
+              <label key={target.value} className="flex items-start gap-3 p-3 rounded-md border border-border hover:border-red-300 cursor-pointer">
+                <input type="checkbox" checked={resetTargets.has(target.value)}
+                  onChange={(e) => {
+                    const next = new Set(resetTargets);
+                    if (e.target.checked) next.add(target.value); else next.delete(target.value);
+                    setResetTargets(next);
+                  }} className="h-4 w-4 mt-0.5" />
+                <div>
+                  <span className="text-sm font-medium">{target.label}</span>
+                  <p className="text-xs text-muted-foreground">{target.description}</p>
                 </div>
-              )}
-            </div>
+              </label>
+            ))}
           </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">Reason for reset</label>
+            <textarea value={resetPurpose} onChange={(e) => setResetPurpose(e.target.value)}
+              placeholder="Explain why you are resetting the app (minimum 10 characters)..." rows={2}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1">
+              Type <code className="px-1 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 rounded text-xs">DELETE</code> to confirm
+            </label>
+            <input type="text" value={resetConfirmation} onChange={(e) => setResetConfirmation(e.target.value)} placeholder="DELETE"
+              className="w-full max-w-xs rounded-md border border-red-300 bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+          </div>
+          <button onClick={handleResetApp}
+            disabled={resetConfirmation !== 'DELETE' || resetTargets.size === 0 || resetPurpose.length < 10 || resetting}
+            className="inline-flex items-center gap-2 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            {resetting ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+            Reset App
+          </button>
+          {resetResult && (
+            <div className="rounded-md border border-border bg-muted/50 p-4">
+              <p className="text-sm font-medium text-emerald-600 mb-2">Reset completed</p>
+              <pre className="text-xs text-muted-foreground overflow-auto">{JSON.stringify(resetResult, null, 2)}</pre>
+            </div>
+          )}
         </div>
       )}
 
       </div>
 
       {/* Save */}
-      <div className="flex justify-end pt-4 border-t border-border mt-6">
-        <Button onClick={handleSave} loading={saving} size="lg">
-          Save Settings
-        </Button>
-      </div>
+      {activeTab !== 'danger' && (
+        <div className="flex justify-start pt-4 border-t border-border mt-6">
+          <Button onClick={handleSave} loading={saving} size="lg">Save Settings</Button>
+        </div>
+      )}
     </div>
   );
 }

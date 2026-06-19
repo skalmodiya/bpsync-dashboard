@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { Card } from '../components/Card';
 import { Info, Database, Calculator } from 'lucide-react';
 
@@ -79,7 +80,7 @@ export function MethodologyPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Methodology</h1>
+        <PageHeader title="Methodology" subtitle="How the BUPA sync process works" />
         <p className="text-sm text-muted-foreground mt-1">
           How dashboard tile counts are calculated. Enable/disable tiles in Settings &rarr; Customization.
         </p>

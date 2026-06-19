@@ -1,9 +1,13 @@
 apiVersion: solution.sap/v1
 kind: Solution
+
 metadata:
   name: bupa-sync-automation-451a0
-  version: "1.0.0"
-  description: "Automate Employee-to-Business Partner synchronization post S/4HANA conversion with AI-powered error resolution and n8n orchestration"
+  version: 1.0.0
+  description: Automate Employee-to-Business Partner synchronization post S/4HANA conversion with AI-powered error resolution and n8n orchestration
+
 assets:
   - ref: ./assets/bupa-sync-agent/asset.yaml
   - ref: ./assets/n8n/asset.yaml
+  - ref: ./assets/dashboard/asset.yaml
+  - ref: ./assets/mock-s4hana/asset.yaml

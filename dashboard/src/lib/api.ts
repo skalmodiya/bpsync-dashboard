@@ -1,4 +1,5 @@
 import type { ApiResponse } from '../types';
+import { getXsuaaToken } from '../components/AuthGuard';
 
 class ApiClient {
   private baseUrl: string;
@@ -7,11 +8,16 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
+  private authHeaders(): Record<string, string> {
+    const token = getXsuaaToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   async get<T>(path: string, options?: RequestInit): Promise<ApiResponse<T>> {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options?.headers },
         ...options,
       });
       if (!res.ok) {
@@ -29,7 +35,7 @@ class ApiClient {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options?.headers },
         body: body ? JSON.stringify(body) : undefined,
         ...options,
       });
@@ -48,7 +54,7 @@ class ApiClient {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options?.headers },
         body: body ? JSON.stringify(body) : undefined,
         ...options,
       });
@@ -67,7 +73,7 @@ class ApiClient {
     try {
       const res = await fetch(`${this.baseUrl}${path}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', ...options?.headers },
+        headers: { 'Content-Type': 'application/json', ...this.authHeaders(), ...options?.headers },
         ...options,
       });
       if (!res.ok) {
@@ -82,7 +88,7 @@ class ApiClient {
   }
 }
 
-export const api = new ApiClient();
+export const api = new ApiClient((window as any).__BACKEND_URL__ || '');
 
 export function n8nApi(apiKey: string) {
   return {

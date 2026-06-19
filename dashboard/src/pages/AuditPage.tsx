@@ -1,8 +1,10 @@
+import { PageHeader } from '../components/PageHeader';
 import { useEffect, useState, useCallback } from 'react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { DataTable, type Column } from '../components/DataTable';
 import { RefreshCw, Trash2 } from 'lucide-react';
+import { api } from '../lib/api';
 
 interface AuditEvent {
   id: string;
@@ -73,13 +75,12 @@ export function AuditPage() {
       if (activeCategory !== 'all') {
         params.set('category', activeCategory);
       }
-      const res = await fetch(`/api/audit?${params}`);
+      const res = await api.get<{ events: AuditEvent[]; total: number }>(`/api/audit?${params}`);
       if (!res.ok) {
-        setError(`Failed to fetch audit events: ${res.status}`);
+        setError(`Failed to fetch audit events: ${res.error}`);
         return;
       }
-      const data = await res.json();
-      setEvents(data.events || []);
+      setEvents(res.data?.events || []);
       setLastRefresh(new Date().toLocaleTimeString());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch events');
@@ -104,10 +105,12 @@ export function AuditPage() {
 
   const handleClear = async () => {
     try {
-      const res = await fetch('/api/audit', { method: 'DELETE' });
+      const res = await api.delete('/api/audit');
       if (res.ok) {
         setEvents([]);
         setConfirmClear(false);
+      } else {
+        setError('Failed to clear audit log');
       }
     } catch {
       setError('Failed to clear audit log');
@@ -162,9 +165,26 @@ export function AuditPage() {
       key: 'details',
       label: 'Details',
       filterable: false,
-      render: (val) => {
-        const entries = Object.entries(val || {});
-        if (entries.length === 0) return <span className="text-muted-foreground text-xs">—</span>;
+      render: (val, row) => {
+        if (!val || Object.keys(val).length === 0)
+          return <span className="text-muted-foreground text-xs">—</span>;
+
+        // Special summary for agent fix requests
+        if (row.action === 'agent.fix_requested') {
+          const hasResponse = !!val.agent_response;
+          return (
+            <span className="text-xs flex items-center gap-1.5">
+              <span className="text-muted-foreground">
+                {val.errors_found ?? 0} errors · {val.pernr_count ?? 0} employee(s)
+              </span>
+              {hasResponse && (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">· response saved ↓</span>
+              )}
+            </span>
+          );
+        }
+
+        const entries = Object.entries(val).filter(([k]) => k !== 'agent_response');
         const summary = entries
           .slice(0, 3)
           .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
@@ -176,36 +196,38 @@ export function AuditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Audit Log</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Track all system actions and changes
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => fetchEvents()}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
-          {!confirmClear ? (
-            <Button variant="destructive" onClick={() => setConfirmClear(true)}>
-              <Trash2 className="h-4 w-4" />
-              Clear Log
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Are you sure?</span>
-              <Button variant="destructive" size="sm" onClick={handleClear}>
-                Yes, Clear
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setConfirmClear(false)}>
-                Cancel
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title="Audit Log"
+        subtitle="Track all system actions and changes"
+        action={
+          <div className="flex items-center gap-2">
+            <button onClick={() => fetchEvents()}
+              className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh
+            </button>
+            {!confirmClear ? (
+              <button onClick={() => setConfirmClear(true)}
+                className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-red-500/30 hover:bg-red-500/45 px-3 py-1.5 rounded-lg transition-colors">
+                <Trash2 className="h-3.5 w-3.5" />
+                Clear Log
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-white/70">Are you sure?</span>
+                <button onClick={handleClear}
+                  className="text-xs text-white bg-red-500/50 hover:bg-red-500/70 px-2.5 py-1.5 rounded-lg transition-colors font-medium">
+                  Yes, Clear
+                </button>
+                <button onClick={() => setConfirmClear(false)}
+                  className="text-xs text-white/70 hover:text-white bg-white/15 hover:bg-white/25 px-2.5 py-1.5 rounded-lg transition-colors">
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        }
+      />
 
       {/* Category Filters */}
       <div className="flex items-center gap-2">
@@ -273,14 +295,53 @@ export function AuditPage() {
           loading={loading}
           rowKey={(row) => row.id}
           expandable
-          renderExpanded={(row) => (
-            <div className="rounded-md bg-muted p-3">
-              <p className="text-xs font-medium mb-2">Full Details</p>
-              <pre className="text-xs text-muted-foreground overflow-auto max-h-40 whitespace-pre-wrap">
-                {JSON.stringify({ details: row.details, metadata: row.metadata }, null, 2)}
-              </pre>
-            </div>
-          )}
+          renderExpanded={(row) => {
+            const isAgentFix = row.action === 'agent.fix_requested';
+            const agentResponse = row.details?.agent_response as string | undefined;
+
+            if (isAgentFix && agentResponse) {
+              return (
+                <div className="rounded-lg border border-border/50 bg-muted/20 overflow-hidden">
+                  {/* Summary bar */}
+                  <div className="flex items-center gap-4 px-4 py-2 bg-emerald-500/8 border-b border-border/50 text-xs">
+                    <span className="font-medium text-emerald-700 dark:text-emerald-400">🤖 Agent Fix Proposals</span>
+                    {row.details?.pernr_count !== undefined && (
+                      <span className="text-muted-foreground">
+                        {row.details.errors_found as number} errors · {row.details.pernr_count as number} employee(s)
+                      </span>
+                    )}
+                    {(row.details?.pernr_list as string[] | undefined)?.length ? (
+                      <span className="text-muted-foreground">
+                        PERNRs: {(row.details.pernr_list as string[]).join(', ')}
+                      </span>
+                    ) : null}
+                    {(row.details?.categories as string[] | undefined)?.length ? (
+                      <span className="text-muted-foreground">
+                        Categories: {(row.details.categories as string[]).join(', ')}
+                      </span>
+                    ) : null}
+                  </div>
+                  {/* Agent response */}
+                  <div className="p-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Agent Response</p>
+                    <pre className="text-xs text-foreground leading-relaxed whitespace-pre-wrap overflow-auto max-h-96 font-mono bg-background/60 rounded-md p-3 border border-border/40">
+                      {agentResponse}
+                    </pre>
+                  </div>
+                </div>
+              );
+            }
+
+            // Default: raw JSON for all other events
+            return (
+              <div className="rounded-md bg-muted p-3">
+                <p className="text-xs font-medium mb-2">Full Details</p>
+                <pre className="text-xs text-muted-foreground overflow-auto max-h-40 whitespace-pre-wrap">
+                  {JSON.stringify({ details: row.details, metadata: row.metadata }, null, 2)}
+                </pre>
+              </div>
+            );
+          }}
           emptyMessage="No audit events found."
         />
       </Card>

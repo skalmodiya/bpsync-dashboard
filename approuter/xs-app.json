@@ -1,0 +1,24 @@
+{
+  "welcomeFile": "/index.html",
+  "authenticationMethod": "route",
+  "sessionTimeout": 60,
+  "routes": [
+    {
+      "source": "^/api/(.*)",
+      "target": "/api/$1",
+      "destination": "bpsync-backend",
+      "authenticationType": "xsuaa",
+      "csrfProtection": false
+    },
+    {
+      "source": "^/(assets/.*|config\\.js|favicon\\.ico|vite\\.svg)$",
+      "localDir": "dashboard",
+      "authenticationType": "none"
+    },
+    {
+      "source": "^/(.*)$",
+      "localDir": "dashboard",
+      "authenticationType": "xsuaa"
+    }
+  ]
+}

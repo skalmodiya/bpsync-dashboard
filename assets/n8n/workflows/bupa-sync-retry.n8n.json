@@ -29,7 +29,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8090/api/bupa/sync/retry",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/bupa/sync/retry",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ pernr_list: $json.pernr_list }) }}",

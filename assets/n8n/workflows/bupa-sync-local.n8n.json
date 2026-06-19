@@ -28,7 +28,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8090/api/pa0000",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/pa0000",
         "options": {}
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000003",
@@ -40,7 +40,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8090/api/lfb1",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/lfb1",
         "options": {}
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000004",
@@ -63,7 +63,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8090/api/bupa/sync/execute",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/bupa/sync/execute",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ pernr_list: $json.employee_list.slice(0, 50) }) }}",
@@ -89,7 +89,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=http://host.docker.internal:8090/api/bupa/sync/status/{{ $('Execute BUPA Sync').first().json.job_id || 'latest' }}",
+        "url": "=https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/bupa/sync/status/{{ $('Execute BUPA Sync').first().json.job_id || 'latest' }}",
         "options": {}
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000008",
@@ -112,7 +112,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8090/api/bupa/sync/log",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/bupa/sync/log",
         "options": {}
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000010",
@@ -124,7 +124,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "http://host.docker.internal:8090/api/slg1/log",
+        "url": "https://mock-s4hana.cfapps.us10.hana.ondemand.com/api/slg1/log",
         "options": {}
       },
       "id": "a1b2c3d4-0001-4000-8000-000000000011",
@@ -176,7 +176,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:5000/invoke",
+        "url": "https://bupa-sync-agent.cfapps.us10.hana.ondemand.com/invoke",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [

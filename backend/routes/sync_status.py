@@ -33,6 +33,21 @@ def _resolve_agent_url(settings: Settings) -> str:
     return url
 
 
+async def _get_s4_client(settings: Settings):
+    """Return (base_url, httpx_client) for S/4HANA — mock or real.
+
+    For mock: returns (mock_url, standard httpx client).
+    For real: returns ("", pre-configured client via BTP destination).
+    """
+    s4 = settings.s4_source
+    if s4.source == "real":
+        from destination import get_s4_client
+        client = await get_s4_client(s4.destination_name, s4.sap_client)
+        return "", client  # base_url is baked into the client
+    else:
+        return settings.mock_s4.url.rstrip("/"), httpx.AsyncClient(timeout=TIMEOUT)
+
+
 def _error(message: str, detail: str = "") -> dict:
     return {"error": message, "detail": detail}
 
@@ -65,30 +80,28 @@ def _append_history_entry(entry: dict) -> None:
 
 
 async def _send_notification_email(settings: Settings, subject: str, body: str):
-    """Send an HTML notification email. Silently fails if SMTP not configured."""
-    if not settings.smtp.host:
+    """Send an HTML notification email to configured recipients. Silently fails if not configured."""
+    recipients = getattr(settings.smtp, 'notification_emails', []) or []
+    if not recipients or not settings.smtp.host:
         return
+    from_addr = getattr(settings.smtp, 'from_email', '') or settings.smtp.username or "bupa-sync@noreply.local"
     try:
-
         def _send():
             msg = MIMEMultipart()
-            msg["From"] = "bupa-sync@local.test"
-            msg["To"] = "consultant@local.test"
+            msg["From"] = from_addr
+            msg["To"] = ", ".join(recipients)
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "html"))
-
-            smtp = smtplib.SMTP(settings.smtp.host, settings.smtp.port, timeout=5)
+            smtp = smtplib.SMTP(settings.smtp.host, settings.smtp.port, timeout=10)
             smtp.ehlo()
             if settings.smtp.username and settings.smtp.password:
+                smtp.starttls()
                 smtp.login(settings.smtp.username, settings.smtp.password)
-            smtp.sendmail(
-                "bupa-sync@local.test", ["consultant@local.test"], msg.as_string()
-            )
+            smtp.sendmail(from_addr, recipients, msg.as_string())
             smtp.quit()
-
         await asyncio.to_thread(_send)
     except Exception:
-        pass  # Don't fail if email can't be sent
+        pass
 
 
 @router.get("/status")
@@ -98,9 +111,18 @@ async def get_sync_status(settings: Settings = Depends(get_settings)) -> Any:
     Fetches data from the mock S/4HANA service to compute counts and error categories.
     Returns a comprehensive status object for the dashboard.
     """
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4client = await _get_s4_client(settings)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4client as client:
+            # For real S/4, check connectivity first
+            if settings.s4_source.source == "real":
+                ping = await client.get("/sap/bc/ping")
+                if ping.status_code == 401:
+                    return _error(
+                        "S/4HANA authentication failed",
+                        "Cloud Connector reached the system (HTTP 401). "
+                        "Please verify the credentials in the BTP destination are correct for S/4HANA user logon."
+                    )
             # Fetch employee master data (PA0000 - Actions infotype)
             resp = await client.get(f"{base_url}/api/pa0000")
             if resp.status_code != 200:
@@ -294,9 +316,9 @@ async def get_sync_status(settings: Settings = Depends(get_settings)) -> Any:
 @router.get("/errors")
 async def get_sync_errors(settings: Settings = Depends(get_settings)) -> Any:
     """Get current error log from mock S/4HANA."""
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4client = await _get_s4_client(settings)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4client as client:
             resp = await client.get(f"{base_url}/api/sync/errors")
             if resp.status_code == 200:
                 return resp.json()
@@ -329,9 +351,9 @@ async def get_error_categories(
     settings: Settings = Depends(get_settings),
 ) -> Any:
     """Get all distinct error categories from the current sync error log."""
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4client = await _get_s4_client(settings)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4client as client:
             log_resp = await client.get(f"{base_url}/api/bupa/sync/log")
             if log_resp.status_code == 200:
                 errors = log_resp.json().get("results", [])
@@ -366,9 +388,9 @@ async def get_sync_records(
     settings: Settings = Depends(get_settings),
 ) -> Any:
     """Get paginated employee sync records with status and category filter."""
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4client = await _get_s4_client(settings)
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4client as client:
             # Get all employees
             emp_resp = await client.get(f"{base_url}/api/pa0000")
             employees = (
@@ -477,7 +499,7 @@ async def trigger_full_sync(settings: Settings = Depends(get_settings)) -> Any:
     3. Push updates to SuccessFactors (simulated)
     4. Record results
     """
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4_ctx = await _get_s4_client(settings)
     timestamp = datetime.now(timezone.utc).isoformat()
 
     history_entry = {
@@ -491,7 +513,7 @@ async def trigger_full_sync(settings: Settings = Depends(get_settings)) -> Any:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4_ctx as client:
             # Step 1: Fetch employee list
             resp = await client.get(f"{base_url}/api/pa0000")
             if resp.status_code != 200:
@@ -603,7 +625,7 @@ async def retry_sync(
     If the number of records exceeds the configured job threshold,
     the operation is scheduled as a background job.
     """
-    from auth import get_optional_user
+    from xsuaa import get_optional_user
     from audit import log_event
 
     user = get_optional_user(request)
@@ -611,11 +633,11 @@ async def retry_sync(
     categories = payload.get("categories", [])
     mode = payload.get("mode", "selected")
 
-    base_url = settings.mock_s4.url.rstrip("/")
+    base_url, _s4_ctx = await _get_s4_client(settings)
 
     if mode == "all_failed" or mode == "by_category":
         # Get PERNRs from error log, optionally filtered by category
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        async with _s4_ctx as client:
             log_resp = await client.get(f"{base_url}/api/bupa/sync/log")
             if log_resp.status_code == 200:
                 errors = log_resp.json().get("results", [])
@@ -635,7 +657,7 @@ async def retry_sync(
         else settings.n8n.url.rstrip("/")
     )
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with _s4_ctx as client:
             # Try production webhook first, then test webhook
             n8n_payload = {
                 "action": "retry_sync",
@@ -718,7 +740,7 @@ async def ask_agent_fix(
     the operation is scheduled as a background job.
     Returns agent's fix proposals.
     """
-    from auth import get_optional_user
+    from xsuaa import get_optional_user
     from audit import log_event
 
     user = get_optional_user(request)
@@ -727,12 +749,15 @@ async def ask_agent_fix(
     mode = payload.get("mode", "selected")
 
     # Gather error details
-    base_url = settings.mock_s4.url.rstrip("/")
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        log_resp = await client.get(f"{base_url}/api/bupa/sync/log")
-        all_errors = (
-            log_resp.json().get("results", []) if log_resp.status_code == 200 else []
-        )
+    base_url, _s4_ctx = await _get_s4_client(settings)
+    try:
+        async with _s4_ctx as client:
+            log_resp = await client.get(f"{base_url}/api/bupa/sync/log")
+            all_errors = (
+                log_resp.json().get("results", []) if log_resp.status_code == 200 else []
+            )
+    except Exception:
+        all_errors = []
 
     # Filter errors by mode
     if mode == "by_category" and categories:
@@ -805,14 +830,20 @@ async def ask_agent_fix(
     except Exception as e:
         response_content = f"Error: {str(e)}"
 
-    # Audit log
+    # Audit log — include the agent response so it can be reviewed in the Audit Log page
     log_event(
         action="agent.fix_requested",
         category="agent",
         user=user["user_id"],
         user_name=user["name"],
         user_email=user.get("email", ""),
-        details={"pernr_count": len(pernr_list), "errors_found": len(selected_errors)},
+        details={
+            "pernr_count": len(pernr_list),
+            "errors_found": len(selected_errors),
+            "agent_response": response_content[:8000],  # cap at 8KB
+            "pernr_list": pernr_list[:20],  # store up to 20 PERNRs
+            "categories": categories,
+        },
     )
 
     # Send email with agent analysis

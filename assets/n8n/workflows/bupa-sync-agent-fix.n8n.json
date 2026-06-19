@@ -29,7 +29,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:5000/invoke",
+        "url": "https://bupa-sync-agent.cfapps.us10.hana.ondemand.com/invoke",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ messages: [{ role: 'user', content: $json.agent_message }] }) }}",

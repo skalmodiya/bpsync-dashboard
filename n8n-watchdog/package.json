@@ -1,0 +1,15 @@
+{
+  "name": "n8n-watchdog",
+  "version": "1.0.0",
+  "description": "Monitors n8n health and auto-restarts via CF API when blocked",
+  "main": "watchdog.js",
+  "scripts": {
+    "start": "node watchdog.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

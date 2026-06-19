@@ -1,12 +1,4 @@
-"""Database layer for BUPA Sync - supports SQLite (native) and PostgreSQL (Docker).
-
-- Native/local development: SQLite (zero-config, file-based)
-- Docker deployment: PostgreSQL (shared with n8n, concurrent access)
-
-The DATABASE_URL environment variable controls which backend is used:
-- Not set / empty: SQLite at backend/data/bupa_sync.db
-- Set to postgresql://...: PostgreSQL
-"""
+"""Database layer for BUPA Sync - supports SQLite (local) and PostgreSQL (CF)."""
 
 import json
 import os
@@ -15,12 +7,10 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 _USE_POSTGRES = DATABASE_URL.startswith("postgresql")
 
-# SQLite path (only used when not using PostgreSQL)
 DB_PATH = Path(__file__).parent / "data" / "bupa_sync.db"
 
 
@@ -29,12 +19,8 @@ def get_db_path() -> Path:
     return DB_PATH
 
 
-# --- Connection management ---
-
-
 @contextmanager
 def get_connection():
-    """Get a database connection (SQLite or PostgreSQL)."""
     if _USE_POSTGRES:
         import psycopg2
         import psycopg2.extras
@@ -61,8 +47,6 @@ def get_connection():
 
 
 class _SqliteConnectionWrapper:
-    """Thin wrapper around sqlite3.Connection for unified interface."""
-
     def __init__(self, conn):
         self._conn = conn
 
@@ -84,15 +68,12 @@ class _SqliteConnectionWrapper:
 
 
 class _PgConnectionWrapper:
-    """Thin wrapper around psycopg2 connection for unified interface."""
-
     def __init__(self, conn):
         self._conn = conn
 
     def execute(self, query: str, params=None):
         import psycopg2.extras
 
-        # Convert ? placeholders to %s for psycopg2
         query = query.replace("?", "%s")
         cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         if params:
@@ -102,8 +83,6 @@ class _PgConnectionWrapper:
         return cur
 
     def executescript(self, script: str):
-        """Execute a multi-statement script (adapted for PostgreSQL)."""
-        # Convert SQLite-specific syntax to PostgreSQL
         script = script.replace("INSERT OR REPLACE", "INSERT")
         cur = self._conn.cursor()
         cur.execute(script)
@@ -118,8 +97,6 @@ class _PgConnectionWrapper:
         rows = cur.fetchall()
         return [dict(row) for row in rows]
 
-
-# --- Schema initialization ---
 
 _SQLITE_SCHEMA = """
     CREATE TABLE IF NOT EXISTS settings (
@@ -144,31 +121,6 @@ _SQLITE_SCHEMA = """
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_category ON audit_log(category);
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
-
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        user_name TEXT NOT NULL,
-        user_email TEXT NOT NULL,
-        access_token TEXT,
-        refresh_token TEXT,
-        groups TEXT DEFAULT '[]',
-        expires_at TEXT,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS app_users (
-        user_id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        email TEXT NOT NULL DEFAULT '',
-        given_name TEXT DEFAULT '',
-        family_name TEXT DEFAULT '',
-        groups TEXT DEFAULT '[]',
-        first_login TEXT NOT NULL,
-        last_login TEXT NOT NULL,
-        login_count INTEGER DEFAULT 1,
-        status TEXT DEFAULT 'active'
-    );
 """
 
 _POSTGRES_SCHEMA = """
@@ -194,46 +146,21 @@ _POSTGRES_SCHEMA = """
     CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_category ON audit_log(category);
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
-
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        user_name TEXT NOT NULL,
-        user_email TEXT NOT NULL,
-        access_token TEXT,
-        refresh_token TEXT,
-        groups TEXT DEFAULT '[]',
-        expires_at TEXT,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS app_users (
-        user_id TEXT PRIMARY KEY,
-        display_name TEXT NOT NULL,
-        email TEXT NOT NULL DEFAULT '',
-        given_name TEXT DEFAULT '',
-        family_name TEXT DEFAULT '',
-        groups TEXT DEFAULT '[]',
-        first_login TEXT NOT NULL,
-        last_login TEXT NOT NULL,
-        login_count INTEGER DEFAULT 1,
-        status TEXT DEFAULT 'active'
-    );
 """
 
 
 def init_db():
-    """Initialize database tables."""
     with get_connection() as conn:
         if _USE_POSTGRES:
             conn.executescript(_POSTGRES_SCHEMA)
-            # Migration: add groups column if missing
-            try:
-                conn.execute(
-                    "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS groups TEXT DEFAULT '[]'"
-                )
-            except Exception:
-                pass
+            for migration in [
+                "ALTER TABLE settings ADD COLUMN IF NOT EXISTS updated_at TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE settings ADD COLUMN IF NOT EXISTS updated_by TEXT DEFAULT 'system'",
+            ]:
+                try:
+                    conn.execute(migration)
+                except Exception:
+                    pass
         else:
             conn.executescript(_SQLITE_SCHEMA)
 
@@ -355,150 +282,9 @@ def get_audit_events(
         ]
 
 
-# --- Sessions ---
-def create_session(
-    session_id: str,
-    user_id: str,
-    user_name: str,
-    user_email: str,
-    access_token: str = "",
-    refresh_token: str = "",
-    groups: str = "[]",
-    expires_at: str = "",
-):
-    with get_connection() as conn:
-        if _USE_POSTGRES:
-            conn.execute(
-                "INSERT INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, groups, expires_at, created_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) "
-                "ON CONFLICT (session_id) DO UPDATE SET "
-                "user_id = EXCLUDED.user_id, user_name = EXCLUDED.user_name, "
-                "user_email = EXCLUDED.user_email, access_token = EXCLUDED.access_token, "
-                "refresh_token = EXCLUDED.refresh_token, groups = EXCLUDED.groups, expires_at = EXCLUDED.expires_at",
-                (
-                    session_id,
-                    user_id,
-                    user_name,
-                    user_email,
-                    access_token,
-                    refresh_token,
-                    groups,
-                    expires_at,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-        else:
-            conn.execute(
-                "INSERT OR REPLACE INTO sessions (session_id, user_id, user_name, user_email, access_token, refresh_token, groups, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    session_id,
-                    user_id,
-                    user_name,
-                    user_email,
-                    access_token,
-                    refresh_token,
-                    groups,
-                    expires_at,
-                    datetime.now(timezone.utc).isoformat(),
-                ),
-            )
-
-
-def get_session(session_id: str) -> Optional[dict]:
-    with get_connection() as conn:
-        return conn.fetchone(
-            "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
-        )
-
-
-def delete_session(session_id: str):
-    with get_connection() as conn:
-        conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-
-
-# --- App Users (auto-created on IAS login) ---
-
-
-def upsert_app_user(
-    user_id: str,
-    display_name: str,
-    email: str = "",
-    given_name: str = "",
-    family_name: str = "",
-    groups: str = "[]",
-):
-    """Create or update an app user record on login."""
-    now = datetime.now(timezone.utc).isoformat()
-    with get_connection() as conn:
-        if _USE_POSTGRES:
-            conn.execute(
-                """INSERT INTO app_users (user_id, display_name, email, given_name, family_name, groups, first_login, last_login, login_count, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, 'active')
-                ON CONFLICT (user_id) DO UPDATE SET
-                    display_name = EXCLUDED.display_name,
-                    email = EXCLUDED.email,
-                    given_name = EXCLUDED.given_name,
-                    family_name = EXCLUDED.family_name,
-                    groups = EXCLUDED.groups,
-                    last_login = EXCLUDED.last_login,
-                    login_count = app_users.login_count + 1""",
-                (
-                    user_id,
-                    display_name,
-                    email,
-                    given_name,
-                    family_name,
-                    groups,
-                    now,
-                    now,
-                ),
-            )
-        else:
-            existing = conn.fetchone(
-                "SELECT * FROM app_users WHERE user_id = ?", (user_id,)
-            )
-            if existing:
-                conn.execute(
-                    """UPDATE app_users SET display_name=?, email=?, given_name=?, family_name=?,
-                       groups=?, last_login=?, login_count=login_count+1 WHERE user_id=?""",
-                    (
-                        display_name,
-                        email,
-                        given_name,
-                        family_name,
-                        groups,
-                        now,
-                        user_id,
-                    ),
-                )
-            else:
-                conn.execute(
-                    """INSERT INTO app_users (user_id, display_name, email, given_name, family_name, groups, first_login, last_login, login_count, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 'active')""",
-                    (
-                        user_id,
-                        display_name,
-                        email,
-                        given_name,
-                        family_name,
-                        groups,
-                        now,
-                        now,
-                    ),
-                )
-
-
-def list_app_users() -> list[dict]:
-    """Return all registered app users."""
-    with get_connection() as conn:
-        return conn.fetchall("SELECT * FROM app_users ORDER BY last_login DESC")
-
-
-def get_app_user(user_id: str) -> Optional[dict]:
-    """Get a specific app user."""
-    with get_connection() as conn:
-        return conn.fetchone("SELECT * FROM app_users WHERE user_id = ?", (user_id,))
-
-
-# Initialize on import
-init_db()
+# Initialize on import — non-fatal so app starts even if DB is temporarily down
+import logging as _logging
+try:
+    init_db()
+except Exception as _e:
+    _logging.getLogger(__name__).warning(f"DB init failed at startup (will retry on first request): {_e}")

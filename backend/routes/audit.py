@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Query, Request
 
 from audit import get_events, clear_events, log_event
-from auth import get_optional_user
+from xsuaa import get_optional_user
 
 router = APIRouter()
 

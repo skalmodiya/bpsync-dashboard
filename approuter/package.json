@@ -1,0 +1,13 @@
+{
+  "name": "bpsync-approuter",
+  "version": "1.0.0",
+  "dependencies": {
+    "@sap/approuter": "^22.0.3"
+  },
+  "scripts": {
+    "start": "node node_modules/@sap/approuter/approuter.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

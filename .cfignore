@@ -1,0 +1,15 @@
+.venv
+__pycache__
+*.pyc
+.ruff_cache
+assets/bupa-sync-agent/__pycache__
+assets/bupa-sync-agent/.venv
+assets/mock-s4hana/__pycache__
+dashboard/node_modules
+n8n-watchdog/node_modules
+dashboard/src
+dashboard/dist/node_modules
+.git
+.claude
+build
+*.zip

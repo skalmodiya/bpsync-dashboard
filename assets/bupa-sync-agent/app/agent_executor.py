@@ -84,6 +84,17 @@ def _load_llm_settings() -> dict:
         config["api_key"] = os.environ["LLM_API_KEY"]
     if os.environ.get("LLM_PROVIDER"):
         config["provider"] = os.environ["LLM_PROVIDER"]
+    # Refresh AI Core token before each invocation to prevent 401 errors
+    if os.environ.get("DEPLOYMENT_MODE") == "cf":
+        try:
+            from app.main import fetch_aicore_token
+            fresh = fetch_aicore_token()
+            if fresh:
+                config["api_key"] = fresh
+        except Exception:
+            pass
+    if os.environ.get("OPENAI_API_KEY") and not config["api_key"]:
+        config["api_key"] = os.environ["OPENAI_API_KEY"]
 
     return config
 
@@ -126,12 +137,39 @@ class LiteLLMChat(BaseChatModel):
             model = f"openai/{model}"
 
         try:
+            extra_headers = {"AI-Resource-Group": os.environ.get("AICORE_RESOURCE_GROUP", "default")}
+
+            # SAP AI Core requires ?api-version=2023-05-15 — call directly via httpx
+            # to avoid OpenAI client stripping the query param from the URL.
+            if os.environ.get("LLM_PROVIDER") == "sap_ai_core":
+                import httpx as _httpx
+                url = self.api_base.rstrip("/") + "/chat/completions?api-version=2023-05-15"
+                payload = {"model": model.replace("openai/", ""), "messages": formatted}
+                if stop:
+                    payload["stop"] = stop
+                async with _httpx.AsyncClient(timeout=60.0) as _client:
+                    _resp = await _client.post(
+                        url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                            **extra_headers,
+                        },
+                    )
+                if _resp.status_code != 200:
+                    raise RuntimeError(f"SAP AI Core returned {_resp.status_code}: {_resp.text[:300]}")
+                _data = _resp.json()
+                content = _data["choices"][0]["message"]["content"] or ""
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(content=content))])
+
             response = await acompletion(
                 model=model,
                 messages=formatted,
                 api_base=self.api_base,
                 api_key=self.api_key or "not-needed",
                 stop=stop,
+                extra_headers=extra_headers,
                 **kwargs,
             )
         except litellm.AuthenticationError as e:
@@ -208,7 +246,11 @@ class AgentExecutor:
                     api_key=config["api_key"] or "not-needed",
                 )
 
-            # Verify LLM is reachable by calling /models endpoint
+            # Verify LLM is reachable — skip for SAP AI Core (no /models endpoint)
+            if provider == "sap_ai_core":
+                logger.info(f"SAP AI Core LLM configured: deployment={config['base_url']}")
+                return llm
+
             import httpx
 
             models_url = config["base_url"].rstrip("/") + "/models"

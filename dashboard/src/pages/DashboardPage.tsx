@@ -1,3 +1,4 @@
+import { PageHeader } from '../components/PageHeader';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../components/Card';
@@ -172,71 +173,64 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{config.title}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Business Partner sync progress and results
-            {syncData?.last_sync_time && (
-              <span className="ml-2">
-                — Last sync: {new Date(syncData.last_sync_time).toLocaleString()}
+    <div className="space-y-5">
+      {/* Gradient header */}
+      <PageHeader
+        title={config.title}
+        subtitle={`Business Partner sync progress and results${syncData?.last_sync_time ? ` — Last sync: ${new Date(syncData.last_sync_time).toLocaleString()}` : ''}`}
+        action={
+          <div className="flex items-center gap-2">
+            {syncData?.methodology && (
+              <div className="relative group">
+                <button className="text-white/70 hover:text-white p-1 rounded" title="How are these numbers calculated?">
+                  <Info className="h-4 w-4" />
+                </button>
+                <div className="absolute right-0 top-full mt-2 z-50 hidden group-hover:block w-80 rounded-md border border-border bg-card shadow-lg p-4">
+                  <h4 className="text-xs font-semibold mb-2">Count Methodology</h4>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    {Object.entries(syncData.methodology).filter(([k]) => k !== 'note').map(([key, desc]) => (
+                      <div key={key} className="flex gap-2">
+                        <span className="font-medium text-foreground min-w-[100px]">{key.replace(/_/g, ' ')}:</span>
+                        <span>{desc as string}</span>
+                      </div>
+                    ))}
+                    {syncData.methodology.note && (
+                      <p className="mt-2 pt-2 border-t border-border text-[10px] italic">{syncData.methodology.note}</p>
+                    )}
+                  </div>
+                  <button onClick={() => navigate('/methodology')} className="mt-3 text-xs text-primary hover:underline">
+                    View full methodology →
+                  </button>
+                </div>
+              </div>
+            )}
+            {config.autoRefresh && (
+              <span className="text-xs text-white/70 flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Auto-refresh {config.refreshInterval}s
               </span>
             )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Methodology info */}
-          {syncData?.methodology && (
-            <div className="relative group">
-              <button className="text-muted-foreground hover:text-foreground p-1 rounded" title="How are these numbers calculated?">
-                <Info className="h-4 w-4" />
-              </button>
-              <div className="absolute right-0 top-full mt-2 z-50 hidden group-hover:block w-80 rounded-md border border-border bg-card shadow-lg p-4">
-                <h4 className="text-xs font-semibold mb-2">Count Methodology</h4>
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                  {Object.entries(syncData.methodology).filter(([k]) => k !== 'note').map(([key, desc]) => (
-                    <div key={key} className="flex gap-2">
-                      <span className="font-medium text-foreground min-w-[100px]">{key.replace(/_/g, ' ')}:</span>
-                      <span>{desc as string}</span>
-                    </div>
-                  ))}
-                  {syncData.methodology.note && (
-                    <p className="mt-2 pt-2 border-t border-border text-[10px] italic">{syncData.methodology.note}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => navigate('/methodology')}
-                  className="mt-3 text-xs text-primary hover:underline"
-                >
-                  View full methodology &rarr;
-                </button>
-              </div>
-            </div>
-          )}
-          {config.autoRefresh && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Auto-refresh {config.refreshInterval}s
-            </span>
-          )}
-          <Button variant="outline" size="sm" onClick={fetchSyncStatus} loading={loading}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
-        </div>
-      </div>
+            <button
+              onClick={fetchSyncStatus}
+              disabled={loading}
+              className="flex items-center gap-1.5 text-xs text-white/80 hover:text-white bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+          </div>
+        }
+      />
 
       {/* Stats Cards */}
       <div
         className={clsx(
-          'grid gap-4',
+          'grid gap-4 stagger-children',
           visibleCards.length <= 3
             ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
             : visibleCards.length === 4
-              ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-              : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5'
+              ? 'grid-cols-2 lg:grid-cols-4'
+              : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 2xl:grid-cols-5'
         )}
       >
         {visibleCards.map((cardConfig) => (
@@ -251,10 +245,10 @@ export function DashboardPage() {
       </div>
 
       {/* Error Breakdown + Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-5">
         {/* Error Breakdown */}
         {config.errorBreakdownStyle !== 'hidden' && (
-          <div className="rounded-lg border border-border bg-card p-6">
+          <div className="rounded-xl border border-border/60 bg-card/90 shadow-card backdrop-blur-sm p-5 transition-all duration-300 hover:shadow-card-hover">
             <div className="mb-4">
               <h3
                 onClick={() => navigate('/records?status=failed')}
@@ -326,7 +320,7 @@ export function DashboardPage() {
         )}
 
         {/* Recent Activity Timeline */}
-        <div className={clsx("rounded-lg border border-border bg-card p-6", config.errorBreakdownStyle === 'hidden' ? 'lg:col-span-2' : '')}>
+        <div className={clsx("rounded-xl border border-border/60 bg-card/90 shadow-card backdrop-blur-sm p-5 transition-all duration-300 hover:shadow-card-hover", config.errorBreakdownStyle === 'hidden' ? 'lg:col-span-2 xl:col-span-3' : 'xl:col-span-2')}>
           <div className="mb-4">
             <h3
               onClick={() => navigate('/audit')}
