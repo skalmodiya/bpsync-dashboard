@@ -24,17 +24,28 @@ def get_connection():
     if _USE_POSTGRES:
         import psycopg2
         import psycopg2.extras
+        import time
 
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = False
-        try:
-            yield _PgConnectionWrapper(conn)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        # Retry up to 3 times with backoff — Neon free tier suspends and needs ~2s to wake
+        last_err = None
+        for attempt in range(3):
+            try:
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=15)
+                conn.autocommit = False
+                try:
+                    yield _PgConnectionWrapper(conn)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
+                return
+            except psycopg2.OperationalError as e:
+                last_err = e
+                if attempt < 2:
+                    time.sleep(2 ** attempt)  # 1s, 2s
+        raise last_err
     else:
         conn = sqlite3.connect(str(get_db_path()))
         conn.row_factory = sqlite3.Row

@@ -16,13 +16,35 @@ from xsuaa import get_optional_user
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     import logging
+
+    logger = logging.getLogger(__name__)
+
     try:
         from config import load_settings
         load_settings()
     except Exception as e:
-        logging.getLogger(__name__).warning(f"Settings load failed at startup (DB may be down): {e}")
+        logger.warning(f"Settings load failed at startup (DB may be down): {e}")
+
+    # Keepalive: ping Neon every 3 minutes to prevent free-tier suspension
+    async def _keepalive():
+        from database import _USE_POSTGRES, DATABASE_URL
+        if not _USE_POSTGRES:
+            return
+        import psycopg2
+        while True:
+            await asyncio.sleep(180)
+            try:
+                conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
+                conn.cursor().execute("SELECT 1")
+                conn.close()
+            except Exception as e:
+                logger.debug(f"DB keepalive ping failed: {e}")
+
+    task = asyncio.create_task(_keepalive())
     yield
+    task.cancel()
 
 
 app = FastAPI(
