@@ -12,7 +12,7 @@ applications:
     health-check-http-endpoint: /health
     env:
       PYTHONUNBUFFERED: "1"
-      DATABASE_URL: "postgresql://892787506030:REDACTED_ROTATE_NOW@postgres-0a1cd95b-dab8-4789-ad2b-674e3b67885c.cqryblsdrbcs.us-east-1.rds.amazonaws.com:2680/ELgPHVsrianR?sslmode=require"
+      DATABASE_URL: "${DATABASE_URL}"
       N8N_URL: "https://bpsync-n8n.cfapps.us10-001.hana.ondemand.com"
       AGENT_URL: "https://bupa-sync-agent.cfapps.us10-001.hana.ondemand.com"
       MOCK_S4_URL: "https://mock-s4hana.cfapps.us10-001.hana.ondemand.com"

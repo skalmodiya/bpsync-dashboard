@@ -108,7 +108,7 @@ applications:
       AGENT_URL: "https://bupa-sync-agent.cfapps.us10.hana.ondemand.com"
       MOCK_S4_URL: "https://mock-s4hana.cfapps.us10.hana.ondemand.com"
       ALLOWED_ORIGINS: "https://bpsync-dashboard.cfapps.us10.hana.ondemand.com"
-      DATABASE_URL: "postgresql://neondb_owner:REDACTED_ROTATE_NOW@ep-steep-truth-atkvnd1q.c-9.us-east-1.aws.neon.tech:5432/neondb?sslmode=require"
+      DATABASE_URL: "${DATABASE_URL}"
       DEPLOYMENT_MODE: "cf"
 
   - name: bpsync-n8n
@@ -128,11 +128,11 @@ applications:
       GENERIC_TIMEZONE: Asia/Singapore
       N8N_PUSH_BACKEND: websocket
       DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: "ep-steep-truth-atkvnd1q.c-9.us-east-1.aws.neon.tech"
+      DB_POSTGRESDB_HOST: "${NEON_HOST}"
       DB_POSTGRESDB_PORT: "5432"
-      DB_POSTGRESDB_DATABASE: "neondb"
-      DB_POSTGRESDB_USER: "neondb_owner"
-      DB_POSTGRESDB_PASSWORD: "REDACTED_ROTATE_NOW"
+      DB_POSTGRESDB_DATABASE: "${NEON_DB}"
+      DB_POSTGRESDB_USER: "${NEON_USER}"
+      DB_POSTGRESDB_PASSWORD: "${NEON_PASSWORD}"
       DB_POSTGRESDB_SSL_ENABLED: "true"
       DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED: "false"
       DB_POSTGRESDB_POOL_SIZE: "2"
